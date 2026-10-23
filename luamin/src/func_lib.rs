@@ -28,6 +28,8 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> Deref
     type Target = FuncLib<SLP, LE, X>;
 
     fn deref(&self) -> &Self::Target {
+        // SAFETY: FuncLibHelper is repr(transparent) over the same slice type,
+        // and the returned reference retains the slice metadata and self lifetime.
         unsafe { &*(self.func_defs.as_ref() as *const _ as *const Self::Target) }
     }
 }
@@ -137,11 +139,13 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[must_use = "Always check which variant is returned"]
 pub enum GasError<E> {
+    #[error("Gas budget exceeded")]
     GasExceeded,
-    Other(E),
+    #[error("{0}")]
+    Other(#[source] E),
 }
 
 impl<LE> From<GasError<LE>> for GasError<FuncPointerCallError<LE>> {
@@ -172,15 +176,21 @@ luamin_macro::gen_func_pointer!(
 macro_rules! __consume_gas {
     ($gas:expr, $gas_cost:expr) => {
         if ($gas).consume($gas_cost) {
-            return ::core::result::Result::Err(::luamin::func_lib::GasError::GasExceeded);
+            return ::core::result::Result::Err($crate::func_lib::GasError::GasExceeded);
         }
     };
 }
 
 pub use crate::__consume_gas as consume_gas;
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("Duplicate host function: {name}")]
+pub struct DuplicateFunctionError {
+    pub name: SmolStr,
+}
+
 impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> FuncLibBuf<SLP, LE, X> {
-    pub fn new<I>(func_defs: I) -> Option<FuncLibBuf<SLP, LE, X>>
+    pub fn new<I>(func_defs: I) -> Result<FuncLibBuf<SLP, LE, X>, DuplicateFunctionError>
     where
         I: IntoIterator<Item = FuncDef<SLP, LE, X>>,
     {
@@ -190,11 +200,13 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> FuncLibBuf<
 
         for i in 1..func_defs.len() {
             if func_defs[i - 1].func_name == func_defs[i].func_name {
-                return None;
+                return Err(DuplicateFunctionError {
+                    name: func_defs[i].func_name.clone(),
+                });
             }
         }
 
-        Some(Self { func_defs })
+        Ok(Self { func_defs })
     }
 }
 
@@ -281,6 +293,8 @@ impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'sta
         let mut func_defs = [const { MaybeUninit::uninit() }; N];
         i = 0;
         while i < N {
+            // SAFETY: i < N. Every field is read once; the source array is
+            // forgotten below, and X is checked not to need dropping.
             unsafe {
                 let func_def_static = func_def_statics_ptr.add(i);
                 let func_name = std::ptr::addr_of!((*func_def_static).func_name);
@@ -297,6 +311,8 @@ impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'sta
         }
         std::mem::forget(func_def_statics);
 
+        // SAFETY: all N elements have been initialized; MaybeUninit<T> has
+        // the layout of T, and the source storage does not drop its contents.
         unsafe {
             let func_defs = &func_defs as *const _ as *const [FuncDef<SLP, LE, X>; N];
             let func_defs = func_defs.read();
@@ -349,99 +365,4 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> FuncDef<SLP
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct State {
-        score: i32,
-    }
-
-    struct StateLifetimeProvider;
-    impl FuncPointerStateLifetimeProvider for StateLifetimeProvider {
-        type StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = State;
-    }
-
-    #[derive(Debug, Clone)]
-    struct FuncDefExtra {
-        extra: i32,
-    }
-
-    #[derive(Debug, thiserror::Error)]
-    enum TestError {
-        #[error("Test error")]
-        TestError,
-    }
-
-    fn f00_mut(s: &mut State, gas: &mut LuaminGas) -> Result<(), GasError<TestError>> {
-        consume_gas!(gas, 1);
-        s.score += 1;
-        Ok(())
-    }
-
-    fn f11(
-        s: &State,
-        gas: &mut LuaminGas,
-        a: LuaminValue,
-    ) -> Result<LuaminValue, GasError<TestError>> {
-        consume_gas!(gas, 1);
-        let a = match a {
-            LuaminValue::Number(a) => a,
-            _ => return Err(GasError::Other(TestError::TestError)),
-        };
-        Ok(LuaminValue::Number(s.score + a))
-    }
-
-    fn f22_mut(
-        s: &mut State,
-        gas: &mut LuaminGas,
-        a: LuaminValue,
-        b: LuaminValue,
-    ) -> Result<(LuaminValue, LuaminValue), GasError<TestError>> {
-        consume_gas!(gas, 1);
-        let a = match a {
-            LuaminValue::Number(a) => a,
-            _ => panic!(),
-        };
-        let b = match b {
-            LuaminValue::Number(b) => b,
-            _ => panic!(),
-        };
-        s.score += a + b;
-        Ok((LuaminValue::Number(a + b), LuaminValue::Number(a * b)))
-    }
-
-    #[test]
-    fn test_func_lib() {
-        let mut func_defs = [
-            FuncDef::<StateLifetimeProvider, TestError, FuncDefExtra>::new_with_extra(
-                "f00_mut",
-                FuncPointer::<StateLifetimeProvider, TestError>::F00Mut(f00_mut),
-                FuncDefExtra { extra: 0 },
-            ),
-            FuncDef::new_with_extra(
-                "f22_mut",
-                FuncPointer::<StateLifetimeProvider, TestError>::F22Mut(f22_mut),
-                FuncDefExtra { extra: 2 },
-            ),
-            FuncDef::new_with_extra(
-                "f11",
-                FuncPointer::<StateLifetimeProvider, TestError>::F11(f11),
-                FuncDefExtra { extra: 1 },
-            ),
-        ];
-        let func_lib = FuncLibBuf::new(func_defs.clone()).unwrap();
-        let (_, func_def) = func_lib.get_func_def("f00_mut").unwrap();
-        assert_eq!(func_def.func_name, "f00_mut");
-        assert_eq!(func_def.extra.extra, 0);
-        let (_, func_def) = func_lib.get_func_def("f22_mut").unwrap();
-        assert_eq!(func_def.func_name, "f22_mut");
-        assert_eq!(func_def.extra.extra, 2);
-        let (_, func_def) = func_lib.get_func_def("f11").unwrap();
-        assert_eq!(func_def.func_name, "f11");
-        assert_eq!(func_def.extra.extra, 1);
-        assert!(func_lib.get_func_def("some_random_function_name").is_none());
-
-        func_defs[0].func_name = SmolStr::new("f11");
-        assert!(FuncLibBuf::new(func_defs).is_none());
-    }
-}
+mod tests;

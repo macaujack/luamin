@@ -69,18 +69,17 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         output_count_limit,
     } = parse_macro_input!(input as MacroInput);
 
-    assert!(
-        lifetime_provider_lifetime_count > 0,
-        "Invalid lifetime provider lifetime count"
-    );
-    assert!(
-        input_count_limit > 0 && input_count_limit < 100,
-        "Invalid input count limit"
-    );
-    assert!(
-        output_count_limit > 0 && output_count_limit < 10,
-        "Invalid output count limit"
-    );
+    if !(1..=9).contains(&lifetime_provider_lifetime_count)
+        || !(1..=99).contains(&input_count_limit)
+        || !(1..=9).contains(&output_count_limit)
+    {
+        return syn::Error::new_spanned(
+            enum_name,
+            "Expected 1-9 state lifetimes, 1-99 input variants, and 1-9 output variants",
+        )
+        .into_compile_error()
+        .into();
+    }
 
     let lifetime_generic_names: Vec<_> = (0..lifetime_provider_lifetime_count)
         .map(|i| syn::Lifetime::new(&format!("'r{i}"), proc_macro2::Span::call_site()))

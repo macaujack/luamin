@@ -3,6 +3,10 @@ use syn::{GenericParam, parse_macro_input};
 
 pub fn luamin_user_value_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as syn::DeriveInput);
+    let runtime = match crate::runtime_path(&input) {
+        Ok(path) => path,
+        Err(error) => return error.into_compile_error().into(),
+    };
     let type_name = &input.ident;
 
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -33,7 +37,7 @@ pub fn luamin_user_value_derive(input: proc_macro::TokenStream) -> proc_macro::T
     };
 
     quote! {
-        impl #impl_generics LuaminUserValue for #type_name #ty_generics
+        impl #impl_generics #runtime::runtime::LuaminUserValue for #type_name #ty_generics
         #where_clause
         {}
     }

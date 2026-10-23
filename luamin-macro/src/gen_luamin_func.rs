@@ -2,15 +2,15 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use quote::{format_ident, quote};
 use syn::{
-    AttrStyle, Expr, FnArg, GenericArgument, GenericParam, ImplItem, ImplItemFn, LitInt, Meta,
-    Path, PathArguments, ReturnType, Type, WherePredicate, ext::IdentExt, parse::Parser,
-    parse_macro_input,
+    Expr, FnArg, GenericArgument, GenericParam, ImplItem, ImplItemFn, LitInt, Meta, Path,
+    PathArguments, ReturnType, Type, WherePredicate, ext::IdentExt, parse::Parser,
 };
 
 pub fn gen_luamin_func(
-    attr: proc_macro::TokenStream,
-    item: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
+    attr: proc_macro2::TokenStream,
+    item: proc_macro2::TokenStream,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let mut runtime: Path = syn::parse_quote!(::luamin);
     // MARK: Attr
     let mut private_lifetime_provider_struct = false;
     let mut incorrect_arg_type_error_func: Option<Path> = None;
@@ -20,7 +20,10 @@ pub fn gen_luamin_func(
     let mut const_func_lib = false;
 
     let attr_parser = syn::meta::parser(|meta| {
-        if meta.path.is_ident("private_lifetime_provider_struct") {
+        if meta.path.is_ident("crate") {
+            runtime = meta.value()?.parse()?;
+            Ok(())
+        } else if meta.path.is_ident("private_lifetime_provider_struct") {
             private_lifetime_provider_struct = true;
             Ok(())
         } else if meta.path.is_ident("incorrect_arg_type_error_func") {
@@ -43,25 +46,43 @@ pub fn gen_luamin_func(
         }
     });
 
-    parse_macro_input!(attr with attr_parser);
+    attr_parser.parse2(attr)?;
 
     let incorrect_arg_type_error_func = match incorrect_arg_type_error_func {
         Some(error_func) => error_func,
-        None => panic!("error_func property is required"),
+        None => {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "incorrect_arg_type_error_func property is required",
+            ));
+        }
     };
     let error_type = match error_type {
         Some(error_type) => error_type,
-        None => panic!("error_type property is required"),
+        None => {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "error_type property is required",
+            ));
+        }
     };
-    let func_def_extra_struct = func_def_extra_struct;
 
     // MARK: Item
 
-    let mut item = parse_macro_input!(item as syn::ItemImpl);
+    let mut item: syn::ItemImpl = syn::parse2(item)?;
+    if item.trait_.is_some() {
+        return Err(syn::Error::new_spanned(&item, "Expected an inherent impl"));
+    }
+    let impl_cfg = crate::conditional_attrs(&item.attrs)?;
     let item_generics = &item.generics;
     let impl_self_ty = match item.self_ty.as_ref() {
         Type::Path(type_path) => type_path,
-        _ => panic!("Self type must be a path type"),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                &item.self_ty,
+                "Self type must be a path type",
+            ));
+        }
     };
 
     let lp_struct_ident = format_ident!(
@@ -138,14 +159,14 @@ pub fn gen_luamin_func(
                 }
             }
 
-            impl #lp_impl_generics Clone for #lp_struct_ident #lp_type_generics
+            impl #lp_impl_generics ::core::clone::Clone for #lp_struct_ident #lp_type_generics
             #lp_where_clause
             {
                 fn clone(&self) -> Self {
                     *self
                 }
             }
-            impl #lp_impl_generics Copy for #lp_struct_ident #lp_type_generics
+            impl #lp_impl_generics ::core::marker::Copy for #lp_struct_ident #lp_type_generics
             #lp_where_clause
             {}
         }
@@ -166,6 +187,9 @@ pub fn gen_luamin_func(
                     GenericArgument::Lifetime(lifetime_arg) => lifetime_arg,
                     _ => continue,
                 };
+                if lifetime_arg.ident == "static" {
+                    continue;
+                }
                 match lifetime_ident_mapping.entry(lifetime_arg.ident.clone()) {
                     Entry::Occupied(occ) => {
                         lifetime_arg.ident = occ.get().clone();
@@ -173,10 +197,12 @@ pub fn gen_luamin_func(
                     Entry::Vacant(vac) => {
                         let new_ident = format_ident!("r{}", unique_lifetime_count);
                         unique_lifetime_count += 1;
-                        assert!(
-                            unique_lifetime_count <= 4,
-                            "At most 4 lifetime parameters are supported"
-                        );
+                        if unique_lifetime_count > 4 {
+                            return Err(syn::Error::new_spanned(
+                                lifetime_arg,
+                                "At most 4 lifetime parameters are supported",
+                            ));
+                        }
                         vac.insert(new_ident.clone());
                         lifetime_arg.ident = new_ident;
                     }
@@ -191,20 +217,24 @@ pub fn gen_luamin_func(
         Vec::with_capacity(item.items.len());
     let mut luamin_func_items: Vec<proc_macro2::TokenStream> = Vec::with_capacity(item.items.len());
 
+    let mut count_entries = Vec::new();
     for item in &mut item.items {
         let impl_fn = match item {
             ImplItem::Fn(impl_fn) => impl_fn,
-            _ => panic!("Only function is supported"),
+            _ => return Err(syn::Error::new_spanned(item, "Only methods are supported")),
         };
 
+        let cfg = crate::conditional_attrs(&impl_fn.attrs)?;
+        count_entries.push(quote! { #(#cfg)* () });
         let handle_result = handle_impl_fn(
+            &runtime,
             impl_fn,
             const_func_lib,
             &incorrect_arg_type_error_func,
             &error_type,
             func_def_extra_struct.as_ref(),
             func_def_extra_struct_fields_required,
-        );
+        )?;
         func_def_array.push(handle_result.func_def_array_element);
         func_def_static_array.push(handle_result.func_def_static_array_element);
         luamin_func_items.push(handle_result.luamin_func_item);
@@ -215,19 +245,19 @@ pub fn gen_luamin_func(
         None => quote! { () },
     };
 
-    let func_def_count = func_def_array.len();
+    let func_def_count = quote! { <[()]>::len(&[#(#count_entries),*]) };
     let conditional_const_token = if const_func_lib {
         quote! { const }
     } else {
         quote! {}
     };
 
-    quote! {
+    let generated = quote! {
         #item
 
         #lp_struct_def
 
-        impl #lp_impl_generics ::luamin::func_lib::FuncPointerStateLifetimeProvider for #lp_struct_ident #lp_type_generics
+        impl #lp_impl_generics #runtime::func_lib::FuncPointerStateLifetimeProvider for #lp_struct_ident #lp_type_generics
         #lp_where_clause
         {
             type StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = #impl_self_ty_for_lp;
@@ -236,12 +266,12 @@ pub fn gen_luamin_func(
         impl #lp_impl_generics #lp_struct_ident #lp_type_generics
         #lp_where_clause
         {
-            pub #conditional_const_token fn new_func_defs() -> [::luamin::func_lib::FuncDef<Self, #error_type, #func_def_extra_type>; #func_def_count] {
+            pub #conditional_const_token fn new_func_defs() -> [#runtime::func_lib::FuncDef<Self, #error_type, #func_def_extra_type>; #func_def_count] {
                 [
                     #(#func_def_array),*
                 ]
             }
-            pub #conditional_const_token fn new_func_def_statics() -> [::luamin::func_lib::FuncDefStatic<Self, #error_type, #func_def_extra_type>; #func_def_count] {
+            pub #conditional_const_token fn new_func_def_statics() -> [#runtime::func_lib::FuncDefStatic<Self, #error_type, #func_def_extra_type>; #func_def_count] {
                 [
                     #(#func_def_static_array),*
                 ]
@@ -249,8 +279,8 @@ pub fn gen_luamin_func(
 
             #(#luamin_func_items)*
         }
-    }
-    .into()
+    };
+    crate::with_conditional_attrs(generated, &impl_cfg)
 }
 
 struct HandleImplFnResult {
@@ -259,486 +289,342 @@ struct HandleImplFnResult {
     luamin_func_item: proc_macro2::TokenStream,
 }
 
-// MARK: Handle
-
 fn handle_impl_fn(
-    impl_fn: &mut ImplItemFn,
+    runtime: &Path,
+    method: &mut ImplItemFn,
     const_func_lib: bool,
     incorrect_arg_type_error_func: &Path,
     error_type: &Type,
-    func_def_extra_struct: Option<&Path>,
-    func_def_extra_struct_fields_required: bool,
-) -> HandleImplFnResult {
-    let mut inner_token_streams = Vec::new();
-    let mut attributed_gas_cost: Option<i32> = None;
-    impl_fn.attrs.retain(|attr| {
-        match attr.style {
-            AttrStyle::Inner(_) => return true,
-            AttrStyle::Outer => {}
-        }
-        if attr.meta.path().is_ident("extra") {
-            match &attr.meta {
-                Meta::List(meta_list) => {
-                    inner_token_streams.push(meta_list.tokens.clone());
-                }
-                _ => panic!("Extra attribute must be a list"),
+    extra_type: Option<&Path>,
+    extra_fields_required: bool,
+) -> syn::Result<HandleImplFnResult> {
+    let cfg = crate::conditional_attrs(&method.attrs)?;
+    let mut extra_tokens = Vec::new();
+    let mut gas_cost = None;
+    let mut kept_attrs = Vec::new();
+    for attr in std::mem::take(&mut method.attrs) {
+        if attr.path().is_ident("gas") {
+            if gas_cost.is_some() {
+                return Err(syn::Error::new_spanned(attr, "Duplicate gas attribute"));
             }
-            false
-        } else if attr.meta.path().is_ident("gas") {
-            let inner_ts = match &attr.meta {
-                Meta::List(meta_list) => &meta_list.tokens,
-                _ => panic!("Gas attribute must be a list"),
+            let value: LitInt = attr.parse_args()?;
+            let cost = value.base10_parse::<i32>()?;
+            if cost < 0 {
+                return Err(syn::Error::new_spanned(
+                    value,
+                    "Gas cost must be nonnegative",
+                ));
+            }
+            gas_cost = Some(cost);
+        } else if attr.path().is_ident("extra") {
+            let Meta::List(list) = &attr.meta else {
+                return Err(syn::Error::new_spanned(attr, "Expected #[extra(...)]"));
             };
-            let lit_int: LitInt =
-                syn::parse2(inner_ts.clone()).expect("Gas cost must be an integer");
-            let gas_cost = lit_int
-                .base10_parse()
-                .expect("Gas cost must be a valid i32");
-            attributed_gas_cost = Some(gas_cost);
-            false
+            if extra_type.is_none() {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "extra requires func_def_extra_struct",
+                ));
+            }
+            extra_tokens.push(list.tokens.clone());
         } else {
-            true
+            kept_attrs.push(attr);
         }
-    });
-    let impl_fn: &_ = impl_fn;
-    let inner_token_streams = inner_token_streams;
-    let attributed_gas_cost = attributed_gas_cost;
-
-    let sig = &impl_fn.sig;
-    let safety = &sig.safety;
-    let original_ident = &sig.ident;
-    let original_ident_unraw_str = original_ident.unraw().to_string();
-    let gen_ident = format_ident!("luamin_{}", original_ident_unraw_str);
-
-    assert!(sig.asyncness.is_none(), "Async function is not supported");
-    assert!(sig.abi.is_none(), "Abi is not supported");
-    assert!(
-        sig.generics.params.is_empty() && sig.generics.where_clause.is_none(),
-        "Generics are not supported"
-    );
-    assert!(sig.variadic.is_none(), "Variadic function is not supported");
-
-    // MARK: Input
-    let receiver = match &sig.inputs.first() {
-        Some(FnArg::Receiver(receiver)) => receiver,
-        _ => panic!("Receiver is required in function signature"),
+    }
+    method.attrs = kept_attrs;
+    let sig = &method.sig;
+    let error = |message: &str| syn::Error::new_spanned(sig, message);
+    if !matches!(sig.safety, syn::Safety::Default) {
+        return Err(error("Unsafe methods are not supported"));
+    }
+    if sig.asyncness.is_some() {
+        return Err(error("Async methods are not supported"));
+    }
+    if sig.abi.is_some() {
+        return Err(error("ABI declarations are not supported"));
+    }
+    if !sig.generics.params.is_empty() || sig.generics.where_clause.is_some() {
+        return Err(error("Method generics are not supported"));
+    }
+    if sig.variadic.is_some() {
+        return Err(error("Variadic methods are not supported"));
+    }
+    let Some(FnArg::Receiver(receiver)) = sig.inputs.first() else {
+        return Err(error("A &self or &mut self receiver is required"));
     };
-    assert!(
-        receiver.attrs.is_empty(),
-        "Receiver attributes are not supported"
-    );
-    let receiver_mutability = match &receiver.kind {
-        syn::ReceiverKind::Reference(_, _, mutability) => mutability,
-        syn::ReceiverKind::Typed(..) => panic!("Receiver must be in shorthand form"),
-        _ => panic!("Receiver must be a reference"),
+    if !receiver.attrs.is_empty() {
+        return Err(error("Receiver attributes are not supported"));
+    }
+    let syn::ReceiverKind::Reference(_, _, mutability) = &receiver.kind else {
+        return Err(error("Receiver must be shorthand &self or &mut self"));
     };
-    let receiver_is_mutable = receiver_mutability.is_some();
-
-    let is_manual_gas = 'is_manual_gas: {
-        if sig.inputs.len() < 2 {
-            break 'is_manual_gas false;
-        }
-        let param = &sig.inputs[1];
-        let ty = match param {
-            FnArg::Receiver(_) => panic!("Unexpected receiver"),
-            FnArg::Typed(pat_type) => pat_type.ty.as_ref(),
-        };
-        let (mutability, pointee_ty) = match ty {
-            Type::Reference(r) => (r.mutability, r.elem.as_ref()),
-            _ => break 'is_manual_gas false,
-        };
-        let path = match pointee_ty {
-            Type::Path(type_path) => &type_path.path,
-            _ => break 'is_manual_gas false,
-        };
-        let last_segment = match path.segments.last() {
-            Some(last_segment) => last_segment,
-            None => break 'is_manual_gas false,
-        };
-        if last_segment.ident != "LuaminGas" {
-            break 'is_manual_gas false;
-        }
-        assert!(
-            mutability.is_some(),
-            "LuaminGas must be a mutable reference"
-        );
-
-        true
-    };
-    let non_input_param_count = 1 + if is_manual_gas { 1 } else { 0 };
-    let other_input_count = sig.inputs.len() - non_input_param_count;
-
-    // MARK: Output
-    let output_type = match &sig.output {
-        ReturnType::Type(_, output_type) => output_type.as_ref(),
-        ReturnType::Default => panic!("Function must have a return type"),
-    };
-    let output_type_path = match output_type {
-        Type::Path(type_path) => type_path,
-        _ => panic!("Function must return a Result"),
-    };
-    assert!(
-        output_type_path.qself.is_none(),
-        "Return type must not contain qualified self"
-    );
-    let last_segment = match output_type_path.path.segments.last() {
-        Some(last_segment) => last_segment,
-        None => panic!("Function must return a Result"),
-    };
-    assert_eq!(
-        last_segment.ident, "Result",
-        "Function must return a Result"
-    );
-    let result_generics = match &last_segment.arguments {
-        PathArguments::AngleBracketed(args) => &args.args,
-        _ => panic!("Returned Result must have generics"),
-    };
-    assert_eq!(
-        result_generics.len(),
-        2,
-        "Returned Result must have exactly 2 generics"
-    );
-    let success_type = match &result_generics[0] {
-        GenericArgument::Type(ty) => ty,
-        _ => panic!("The first generic of the returned Result must be a type"),
-    };
-    let is_gas_error = match &result_generics[1] {
-        GenericArgument::Type(ty) => {
-            if ty == error_type {
-                false
-            } else {
-                let path = match ty {
-                    Type::Path(type_path) => &type_path.path,
-                    _ => panic!("The Error type of the returned Result must be a path type"),
-                };
-                let last_segment = path
-                    .segments
-                    .last()
-                    .expect("Path must have at least one segment");
-                assert_eq!(
-                    last_segment.ident, "GasError",
-                    "The Error type of the returned Result must be either specified error type or GasError"
-                );
-                let generics = match &last_segment.arguments {
-                    PathArguments::AngleBracketed(angle) => &angle.args,
-                    _ => panic!("GasError must have a generic argument"),
-                };
-                assert_eq!(
-                    generics.len(),
-                    1,
-                    "GasError must have exactly 1 generic argument"
-                );
-                let ty = match &generics[0] {
-                    GenericArgument::Type(ty) => ty,
-                    _ => panic!("The generic argument of GasError must be a type"),
-                };
-                assert_eq!(
-                    ty, error_type,
-                    "GasError's generic argument must be the specified error type"
-                );
-                true
-            }
-        }
-        _ => panic!("The second generic of the returned Result must be a type generic"),
-    };
-
-    let OutputInfo {
-        should_clone: output_should_clone,
-    } = get_output_info(success_type);
-    let output_count = output_should_clone.len();
-
-    // MARK: Gen Def
-
-    let func_def_extra_ts = match func_def_extra_struct {
-        Some(func_def_extra_struct) => {
-            let mut key_values = Vec::new();
-            for inner_ts in &inner_token_streams {
-                let key_value_parser = syn::meta::parser(|meta| -> Result<(), syn::Error> {
-                    let key = meta
+    let manual_gas = match sig.inputs.iter().nth(1) {
+        Some(FnArg::Typed(arg)) => match arg.ty.as_ref() {
+            Type::Reference(reference) => match reference.elem.as_ref() {
+                Type::Path(path)
+                    if path
                         .path
-                        .get_ident()
-                        .ok_or(meta.error("Extra attribute key must be an identifier"))?;
-                    let value: Expr = meta.value()?.parse()?;
-                    key_values.push(quote! {
-                        #key: #value
-                    });
-                    Ok(())
-                });
-                if let Err(e) = key_value_parser.parse2(inner_ts.clone()) {
-                    panic!("Extra attribute must be a list of key-value pairs: {e}");
-                }
-            }
-
-            if !func_def_extra_struct_fields_required {
-                let ts = if const_func_lib {
-                    quote! {
-                        ..#func_def_extra_struct::CONST_DEFAULT
+                        .segments
+                        .last()
+                        .is_some_and(|s| s.ident == "LuaminGas") =>
+                {
+                    if reference.mutability.is_none() {
+                        return Err(syn::Error::new_spanned(
+                            &arg.ty,
+                            "LuaminGas must be a mutable reference",
+                        ));
                     }
-                } else {
-                    quote! {
-                        ..Default::default()
-                    }
-                };
-                key_values.push(ts);
-            }
-            quote! {
-                #func_def_extra_struct {
-                    #(#key_values),*
+                    true
                 }
-            }
-        }
-        None => {
-            quote! {()}
-        }
+                _ => false,
+            },
+            _ => false,
+        },
+        _ => false,
     };
-    let func_pointer_variant = format_ident!(
-        "F{}{}{}",
-        other_input_count,
-        output_count,
-        if receiver_is_mutable { "Mut" } else { "" }
-    );
-    let func_def_array_element = quote! {
-        ::luamin::func_lib::FuncDef {
-            func_name: ::luamin::smol_str::SmolStr::new_static(#original_ident_unraw_str),
-            func_pointer: ::luamin::func_lib::FuncPointer::<Self, #error_type>::#func_pointer_variant(Self::#gen_ident),
-            extra: #func_def_extra_ts,
-        }
+    let skip = 1 + usize::from(manual_gas);
+    let input_count = sig.inputs.len() - skip;
+    if input_count > 15 {
+        return Err(error("At most 15 script inputs are supported"));
+    }
+    let ReturnType::Type(_, output) = &sig.output else {
+        return Err(error("Method must return Result<T, E>"));
     };
-    let func_def_static_array_element = quote! {
-        ::luamin::func_lib::FuncDefStatic {
-            func_name: #original_ident_unraw_str,
-            func_pointer: ::luamin::func_lib::FuncPointer::<Self, #error_type>::#func_pointer_variant(Self::#gen_ident),
-            extra: #func_def_extra_ts,
-        }
+    let Type::Path(output_path) = output.as_ref() else {
+        return Err(error("Method must return Result<T, E>"));
     };
-
-    // MARK: Gen Func
-
-    let input_param_list: Vec<_> = (1..=other_input_count)
-        .map(|i| {
-            let input_ident = format_ident!("input{}", i);
-            quote! {
-                #input_ident: ::luamin::runtime::LuaminValue
-            }
-        })
-        .collect();
-    let output_success_type = vec![
-        quote! {
-            ::luamin::runtime::LuaminValue
-        };
-        output_count
-    ];
-
-    let mut input_decl_stmts = Vec::with_capacity(other_input_count);
-    let mut calling_arg_exprs = Vec::with_capacity(other_input_count);
-    let output_idents: Vec<_> = (1..=output_count)
-        .map(|i| format_ident!("output{}", i))
-        .collect();
-    let converted_output_value_exprs: Vec<_> = output_idents
-        .iter()
-        .zip(output_should_clone)
-        .map(|(ident, should_clone)| {
-            if should_clone {
-                quote! {
-                    #ident.clone().to_luamin()
-                }
-            } else {
-                quote! {
-                    #ident.to_luamin()
-                }
-            }
-        })
-        .collect();
-
-    for (i, arg) in sig.inputs.iter().skip(non_input_param_count).enumerate() {
-        let input_type = match &arg {
-            FnArg::Typed(arg) => arg.ty.as_ref(),
-            FnArg::Receiver(_) => panic!("Unexpected receiver"),
-        };
-        let (decl_stmt, calling_expr) = get_input_decl_and_calling_arg(
-            i + 1,
-            input_type,
-            incorrect_arg_type_error_func,
-            &original_ident_unraw_str,
-        );
-        input_decl_stmts.push(decl_stmt);
-        calling_arg_exprs.push(calling_expr);
+    if output_path.qself.is_some() {
+        return Err(error("Qualified return types are not supported"));
     }
-
-    if is_gas_error && !is_manual_gas {
-        panic!(
-            "Function '{}' returns GasError but doesn't manually control gas",
-            original_ident_unraw_str
-        );
+    let result = output_path
+        .path
+        .segments
+        .last()
+        .ok_or_else(|| error("Method must return Result<T, E>"))?;
+    if result.ident != "Result" {
+        return Err(error("Method must return Result<T, E>"));
     }
-    if !is_gas_error && is_manual_gas {
-        panic!(
-            "Function '{}' manually controls gas but the Result's error type is not GasError",
-            original_ident_unraw_str
-        );
+    let PathArguments::AngleBracketed(args) = &result.arguments else {
+        return Err(error("Result requires success and error types"));
+    };
+    if args.args.len() != 2 {
+        return Err(error("Result requires exactly two type arguments"));
     }
-
-    let call_and_output_ts = if is_manual_gas {
-        assert!(
-            attributed_gas_cost.is_none(),
-            "Function '{}' manually controls gas. Shouldn't specify gas cost twice",
-            original_ident_unraw_str
-        );
-        quote! {
-            let (#(#output_idents),*) = state.#original_ident(gas, #(#calling_arg_exprs),*)?;
-            ::core::result::Result::Ok((#(#converted_output_value_exprs),*))
+    let GenericArgument::Type(success_type) = &args.args[0] else {
+        return Err(error("Expected a success type"));
+    };
+    let GenericArgument::Type(return_error) = &args.args[1] else {
+        return Err(error("Expected an error type"));
+    };
+    let expected_error: Type = if manual_gas {
+        syn::parse_quote!(#runtime::func_lib::GasError<#error_type>)
+    } else {
+        error_type.clone()
+    };
+    // GasError can be imported or qualified; compare its arguments structurally.
+    let error_matches = if manual_gas {
+        match return_error {
+            Type::Path(p) => p.path.segments.last().is_some_and(|s| {
+                s.ident == "GasError" && matches!(&s.arguments, PathArguments::AngleBracketed(a) if a.args.len() == 1 && a.args[0] == GenericArgument::Type(error_type.clone()))
+            }),
+            _ => false,
         }
     } else {
-        let gas_cost = attributed_gas_cost.unwrap_or(1);
-
-        quote! {
-            if gas.consume(#gas_cost) {
-                return ::core::result::Result::Err(::luamin::func_lib::GasError::GasExceeded);
-            }
-            let (#(#output_idents),*) = state.#original_ident(#(#calling_arg_exprs),*).map_err(::luamin::func_lib::GasError::Other)?;
-            ::core::result::Result::Ok((#(#converted_output_value_exprs),*))
-        }
+        return_error == &expected_error
     };
-
-    let luamin_func_item = quote! {
-        #safety fn #gen_ident<'r0, 'r1, 'r2, 'r3>(
-            state: & #receiver_mutability <Self as ::luamin::func_lib::FuncPointerStateLifetimeProvider>::StateWithLifetimes<'r0, 'r1, 'r2, 'r3>,
-            gas: &mut ::luamin::runtime::LuaminGas,
-            #(#input_param_list),*
-        ) -> ::core::result::Result<(#(#output_success_type),*), ::luamin::func_lib::GasError<#error_type>> {
-            use ::luamin::convert::ToLuamin;
-
-            #(#input_decl_stmts)*
-
-            #call_and_output_ts
-        }
-    };
-
-    HandleImplFnResult {
-        func_def_array_element,
-        func_def_static_array_element,
-        luamin_func_item,
-    }
-}
-
-struct OutputInfo {
-    should_clone: Vec<bool>,
-}
-
-fn get_output_info(output_type: &Type) -> OutputInfo {
-    match output_type {
-        Type::Array(_) | Type::Reference(_) | Type::Path(_) => OutputInfo {
-            should_clone: vec![output_type_should_clone(output_type)],
-        },
-        Type::Tuple(tuple) => {
-            let mut should_clone = Vec::with_capacity(tuple.elems.len());
-            for elem in &tuple.elems {
-                should_clone.push(output_type_should_clone(elem));
-            }
-            OutputInfo { should_clone }
-        }
-        Type::Paren(type_paren) => get_output_info(&type_paren.elem),
-        Type::Slice(_) => panic!("Slice type is not supported"),
-        Type::TraitObject(_) => panic!("Trait object type is not supported"),
-        Type::Infer(_) => panic!("Infer type is not supported"),
-        Type::ImplTrait(_) => panic!("Opaque type is not supported"),
-        _ => panic!("Unsupported output type"),
-    }
-}
-
-fn output_type_should_clone(output_type: &Type) -> bool {
-    match output_type {
-        Type::Array(_) | Type::Path(_) => false,
-        Type::Reference(type_ref) => match type_ref.elem.as_ref() {
-            Type::Slice(_) => false, // This doesn't require calling Clone because "&[T]" is handled as a special case in `convert` mod.
-            Type::Array(_) | Type::Path(_) | Type::TraitObject(_) => true,
-            Type::Tuple(_) => panic!("Function return type must not be a reference to a tuple"),
-            Type::Infer(_) => {
-                panic!("Function return type must not be a reference to an inferred type")
-            }
-            Type::ImplTrait(_) => {
-                panic!("Function return type must not be a reference to an opaque type")
-            }
-            _ => panic!("Unsupported function return type"),
-        },
-        Type::Tuple(_) => {
-            panic!("Function return type must not be a tuple (aside from the top level)")
-        }
-        Type::Slice(_) => panic!("Function return type must not be a slice (which is DST)"),
-        Type::TraitObject(_) => {
-            panic!("Function return type must not be a trait object (which is DST)")
-        }
-        Type::Infer(_) => panic!("Function return type must not be inferred"),
-        Type::ImplTrait(_) => panic!("Function return type must not be an opaque type"),
-        Type::Paren(type_paren) => output_type_should_clone(&type_paren.elem),
-        _ => panic!("Unsupported function return type"),
-    }
-}
-
-/// `input_index` is 1-based.
-fn get_input_decl_and_calling_arg(
-    input_index: usize,
-    input_type: &Type,
-    incorrect_arg_type_error_func: &Path,
-    original_ident_unraw_str: &str,
-) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
-    let input_ident = format_ident!("input{}", input_index);
-
-    match input_type {
-        Type::Array(_) | Type::Path(_) => {
-            let decl_stmt = quote! {
-                let #input_ident = match <#input_type as ::luamin::convert::FromLuamin>::from_luamin(#input_ident) {
-                    Some(#input_ident) => #input_ident,
-                    None => {
-                        return ::core::result::Result::Err(::luamin::func_lib::GasError::Other(#incorrect_arg_type_error_func(#original_ident_unraw_str, #input_index)));
-                    }
-                };
-            };
-            let calling_expr = quote! { #input_ident };
-            (decl_stmt, calling_expr)
-        }
-        Type::Reference(type_ref) => {
-            let referenced_type = type_ref.elem.as_ref();
-            let (is_slice_ref, inner_type) = match referenced_type {
-                Type::Slice(type_slice) => {
-                    let element_type = type_slice.elem.as_ref();
-                    let ts = quote! { ::luamin::smallvec::SmallVec<[#element_type; 24]> };
-                    (true, ts)
-                }
-                _ => (false, quote! { #referenced_type }),
-            };
-            let mutability = &type_ref.mutability;
-            let decl_stmt = quote! {
-                let #mutability #input_ident = match <#inner_type as ::luamin::convert::FromLuamin>::from_luamin(#input_ident) {
-                    Some(#input_ident) => #input_ident,
-                    None => {
-                        return ::core::result::Result::Err(::luamin::func_lib::GasError::Other(#incorrect_arg_type_error_func(#original_ident_unraw_str, #input_index)));
-                    }
-                };
-            };
-            let calling_expr = if is_slice_ref {
-                if mutability.is_some() {
-                    quote! { #input_ident.as_mut() }
-                } else {
-                    quote! { #input_ident.as_ref() }
-                }
+    if !error_matches {
+        return Err(syn::Error::new_spanned(
+            return_error,
+            if manual_gas {
+                "Manual gas methods must return GasError<error_type>"
             } else {
-                quote! { & #mutability #input_ident }
-            };
-            (decl_stmt, calling_expr)
-        }
-        Type::Paren(type_paren) => get_input_decl_and_calling_arg(
-            input_index,
-            &type_paren.elem,
-            incorrect_arg_type_error_func,
-            original_ident_unraw_str,
-        ),
-        Type::Tuple(_) => panic!("Function parameter must not be a tuple"),
-        Type::Infer(_) => panic!("Function parameter must not be inferred"),
-        Type::Slice(_) => panic!("Function parameter must not be a slice (which is DST)"),
-        _ => panic!(
-            "Unsupported function parameter type at index {}",
-            input_index
-        ),
+                "Return error must match error_type; GasError requires a &mut LuaminGas parameter"
+            },
+        ));
     }
+    if manual_gas && gas_cost.is_some() {
+        return Err(error("Manual gas cannot be combined with #[gas(...)]"));
+    }
+
+    let outputs = output_types(success_type);
+    if outputs.len() > 3 {
+        return Err(error("At most 3 script outputs are supported"));
+    }
+    let mut cloned = Vec::new();
+    for ty in &outputs {
+        cloned.push(output_should_clone(ty)?);
+    }
+    let output_count = outputs.len();
+    let original = &sig.ident;
+    let name = original.unraw().to_string();
+    let wrapper = format_ident!("luamin_{}", name);
+    let variant = format_ident!(
+        "F{}{}{}",
+        input_count,
+        output_count,
+        if mutability.is_some() { "Mut" } else { "" }
+    );
+    let mut declarations = Vec::new();
+    let mut calling_args = Vec::new();
+    let input_names: Vec<_> = (1..=input_count)
+        .map(|i| format_ident!("input{i}"))
+        .collect();
+    for (index, arg) in sig.inputs.iter().skip(skip).enumerate() {
+        let FnArg::Typed(arg) = arg else {
+            return Err(error("Unexpected receiver"));
+        };
+        if !arg.attrs.is_empty() {
+            return Err(syn::Error::new_spanned(
+                arg,
+                "Parameter attributes are not supported",
+            ));
+        }
+        let (declaration, calling_arg) = input_conversion(
+            runtime,
+            index + 1,
+            &arg.ty,
+            incorrect_arg_type_error_func,
+            &name,
+        )?;
+        declarations.push(declaration);
+        calling_args.push(calling_arg);
+    }
+    let output_names: Vec<_> = (1..=output_count)
+        .map(|i| format_ident!("output{i}"))
+        .collect();
+    let converted: Vec<_> = output_names.iter().zip(cloned).map(|(name, clone)| {
+        if clone { quote! { #runtime::convert::ToLuamin::to_luamin(::core::clone::Clone::clone(&*#name)) } }
+        else { quote! { #runtime::convert::ToLuamin::to_luamin(#name) } }
+    }).collect();
+    let output_value_types = vec![quote! { #runtime::runtime::LuaminValue }; output_count];
+    let call = if manual_gas {
+        quote! { state.#original(gas, #(#calling_args),*)? }
+    } else {
+        quote! { state.#original(#(#calling_args),*).map_err(#runtime::func_lib::GasError::Other)? }
+    };
+    let consume = if manual_gas {
+        quote! {}
+    } else {
+        let cost = gas_cost.unwrap_or(1);
+        quote! { gas.try_consume(#cost)?; }
+    };
+    let mut extra_fields = Vec::new();
+    for tokens in extra_tokens {
+        syn::meta::parser(|meta| {
+            let key = meta
+                .path
+                .get_ident()
+                .ok_or_else(|| meta.error("Expected a field name"))?;
+            let value: Expr = meta.value()?.parse()?;
+            extra_fields.push(quote! { #key: #value });
+            Ok(())
+        })
+        .parse2(tokens)?;
+    }
+    let extra = match extra_type {
+        Some(ty) => {
+            if !extra_fields_required {
+                extra_fields.push(if const_func_lib {
+                    quote! { ..#ty::CONST_DEFAULT }
+                } else {
+                    quote! { ..::core::default::Default::default() }
+                });
+            }
+            quote! { #ty { #(#extra_fields),* } }
+        }
+        None => quote! { () },
+    };
+    Ok(HandleImplFnResult {
+        func_def_array_element: quote! {
+            #(#cfg)* #runtime::func_lib::FuncDef {
+                func_name: #runtime::smol_str::SmolStr::new_static(#name),
+                func_pointer: #runtime::func_lib::FuncPointer::<Self, #error_type>::#variant(Self::#wrapper),
+                extra: #extra,
+            }
+        },
+        func_def_static_array_element: quote! {
+            #(#cfg)* #runtime::func_lib::FuncDefStatic {
+                func_name: #name,
+                func_pointer: #runtime::func_lib::FuncPointer::<Self, #error_type>::#variant(Self::#wrapper),
+                extra: #extra,
+            }
+        },
+        luamin_func_item: quote! {
+            #(#cfg)* fn #wrapper<'r0, 'r1, 'r2, 'r3>(
+                state: & #mutability <Self as #runtime::func_lib::FuncPointerStateLifetimeProvider>::StateWithLifetimes<'r0, 'r1, 'r2, 'r3>,
+                gas: &mut #runtime::runtime::LuaminGas,
+                #(#input_names: #runtime::runtime::LuaminValue),*
+            ) -> ::core::result::Result<(#(#output_value_types),*), #runtime::func_lib::GasError<#error_type>> {
+                #(#declarations)*
+                #consume
+                let (#(#output_names),*) = #call;
+                ::core::result::Result::Ok((#(#converted),*))
+            }
+        },
+    })
+}
+
+fn output_types(ty: &Type) -> Vec<&Type> {
+    match ty {
+        Type::Paren(p) => output_types(&p.elem),
+        Type::Tuple(t) => t.elems.iter().collect(),
+        _ => vec![ty],
+    }
+}
+
+fn output_should_clone(ty: &Type) -> syn::Result<bool> {
+    match ty {
+        Type::Array(_) | Type::Path(_) => Ok(false),
+        Type::Reference(r) => match r.elem.as_ref() {
+            Type::Slice(_) => Ok(false),
+            Type::Array(_) | Type::Path(_) | Type::TraitObject(_) => Ok(true),
+            _ => Err(syn::Error::new_spanned(
+                ty,
+                "Unsupported referenced output type",
+            )),
+        },
+        Type::Paren(p) => output_should_clone(&p.elem),
+        _ => Err(syn::Error::new_spanned(ty, "Unsupported output type")),
+    }
+}
+
+fn input_conversion(
+    runtime: &Path,
+    index: usize,
+    ty: &Type,
+    error_fn: &Path,
+    function: &str,
+) -> syn::Result<(proc_macro2::TokenStream, proc_macro2::TokenStream)> {
+    let ident = format_ident!("input{index}");
+    let (conversion_ty, mutable, call) = match ty {
+        Type::Array(_) | Type::Path(_) => (quote! { #ty }, None, quote! { #ident }),
+        Type::Reference(r) => {
+            let mutable = r.mutability;
+            match r.elem.as_ref() {
+                Type::Slice(s) => {
+                    let elem = &s.elem;
+                    let call = if mutable.is_some() {
+                        quote! { #ident.as_mut() }
+                    } else {
+                        quote! { #ident.as_ref() }
+                    };
+                    (
+                        quote! { #runtime::smallvec::SmallVec<[#elem; 24]> },
+                        mutable,
+                        call,
+                    )
+                }
+                inner => (quote! { #inner }, mutable, quote! { & #mutable #ident }),
+            }
+        }
+        Type::Paren(p) => return input_conversion(runtime, index, &p.elem, error_fn, function),
+        _ => return Err(syn::Error::new_spanned(ty, "Unsupported input type")),
+    };
+    Ok((
+        quote! {
+            let #mutable #ident = <#conversion_ty as #runtime::convert::FromLuamin>::from_luamin(#ident)
+                .ok_or_else(|| #runtime::func_lib::GasError::Other(#error_fn(#function, #index)))?;
+        },
+        call,
+    ))
 }

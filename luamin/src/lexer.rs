@@ -2,8 +2,8 @@ use smol_str::SmolStr;
 use winnow::{
     ascii::{dec_int, escaped, multispace0},
     combinator::{
-        Infix, Prefix, alt, cut_err, delimited, dispatch, empty, expression, fail, opt, preceded,
-        repeat, separated, seq, terminated,
+        Infix, Prefix, alt, cut_err, delimited, dispatch, empty, fail, opt, preceded, repeat,
+        separated, seq, terminated,
     },
     error::{ContextError, ErrMode, StrContext, StrContextValue},
     prelude::*,
@@ -16,22 +16,157 @@ use crate::component::{
     PlaceExpr, RepeatStmt, Stmt, ValueExpr, WhileStmt,
 };
 
-#[derive(Debug, Clone)]
-#[repr(transparent)]
-pub struct LexError(String);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LexErrorKind {
+    Syntax,
+    SourceTooLarge,
+    NestingTooDeep,
+    TooManyTokens,
+}
 
-impl std::fmt::Display for LexError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{message} at line {line}, column {column}")]
+pub struct LexError {
+    pub kind: LexErrorKind,
+    pub offset: usize,
+    pub line: usize,
+    pub column: usize,
+    message: String,
+}
+
+impl LexError {
+    fn new(input: &str, offset: usize, kind: LexErrorKind, message: impl Into<String>) -> Self {
+        let before = &input[..offset];
+        let line = before.bytes().filter(|b| *b == b'\n').count() + 1;
+        let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+        Self {
+            kind,
+            offset,
+            line,
+            column,
+            message: message.into(),
+        }
     }
 }
 
-impl std::error::Error for LexError {}
-
 pub fn luamin_lex(input: &str) -> Result<(Directive, Vec<Stmt>), LexError> {
-    parse_program
-        .parse(input.trim_start())
-        .map_err(|e| LexError(e.to_string()))
+    preflight(input)?;
+    let trimmed = input.trim_start();
+    let skipped = input.len() - trimmed.len();
+    let (directive, stmts) = parse_program.parse(trimmed).map_err(|e| {
+        let kind = if e
+            .inner()
+            .context()
+            .any(|c| matches!(c, StrContext::Label("syntax nesting limit")))
+        {
+            LexErrorKind::NestingTooDeep
+        } else {
+            LexErrorKind::Syntax
+        };
+        LexError::new(input, skipped + e.offset(), kind, e.inner().to_string())
+    })?;
+    if !crate::limits::validate(&stmts) {
+        return Err(LexError::new(
+            input,
+            0,
+            LexErrorKind::NestingTooDeep,
+            "Syntax tree limit exceeded",
+        ));
+    }
+    Ok((directive, stmts))
+}
+
+// Bound parser recursion before allocating an AST. Ignore comments and hash
+// strings, so their punctuation cannot accidentally consume a nesting budget.
+fn preflight(input: &str) -> Result<(), LexError> {
+    use crate::limits::{MAX_SOURCE_BYTES, MAX_SYNTAX_DEPTH, MAX_SYNTAX_NODES};
+    if input.len() > MAX_SOURCE_BYTES {
+        return Err(LexError::new(
+            input,
+            0,
+            LexErrorKind::SourceTooLarge,
+            "Source byte limit exceeded",
+        ));
+    }
+    let bytes = input.as_bytes();
+    let (mut i, mut depth, mut tokens) = (0, 0usize, 0);
+    while i < bytes.len() {
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        if bytes[i..].starts_with(b"--") {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        let start = i;
+        if bytes[i..].starts_with(b"h\"") {
+            i += 2;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i = (i + 2).min(bytes.len());
+                } else if bytes[i] == b'"' {
+                    i += 1;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+        } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            i += 1;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            match &input[start..i] {
+                "if" | "do" | "repeat" => depth += 1,
+                "end" | "until" => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        } else {
+            match bytes[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            // Advance over a full character so error positions are UTF-8 boundaries.
+            i += input[i..].chars().next().unwrap().len_utf8();
+        }
+        tokens += 1;
+        if depth >= MAX_SYNTAX_DEPTH {
+            return Err(LexError::new(
+                input,
+                start,
+                LexErrorKind::NestingTooDeep,
+                "Syntax nesting limit exceeded",
+            ));
+        }
+        if tokens > MAX_SYNTAX_NODES {
+            return Err(LexError::new(
+                input,
+                start,
+                LexErrorKind::TooManyTokens,
+                "Syntax token limit exceeded",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn bounded_expression(expr: ValueExpr) -> winnow::ModalResult<ValueExpr> {
+    if crate::limits::validate_expression(&expr) {
+        Ok(expr)
+    } else {
+        Err(nesting_error())
+    }
+}
+
+fn nesting_error() -> ErrMode<ContextError> {
+    let mut error = ContextError::new();
+    error.push(StrContext::Label("syntax nesting limit"));
+    ErrMode::Cut(error)
 }
 
 fn parse_program(input: &mut &str) -> winnow::ModalResult<(Directive, Vec<Stmt>)> {
@@ -77,6 +212,7 @@ fn parse_stmts(input: &mut &str) -> winnow::ModalResult<Vec<Stmt>> {
 }
 
 fn parse_stmt(input: &mut &str) -> winnow::ModalResult<Stmt> {
+    let _depth = ParseDepth::enter()?;
     alt((
         alt((
             parse_compound_assign_stmt.map(Stmt::CompoundAssign),
@@ -284,10 +420,62 @@ fn parse_assign_rhs(input: &mut &str) -> winnow::ModalResult<Vec<ValueExpr>> {
 // MARK: Expr
 
 fn parse_value_expr(input: &mut &str) -> winnow::ModalResult<ValueExpr> {
-    expression(parse_non_op_expr)
-        .prefix(parse_expression_prefix)
-        .infix(parse_expression_infix)
-        .parse_next(input)
+    parse_expression(input, i64::MIN)
+}
+
+thread_local! {
+    static PARSE_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+struct ParseDepth;
+
+impl ParseDepth {
+    fn enter() -> winnow::ModalResult<Self> {
+        PARSE_DEPTH.with(|depth| {
+            if depth.get() >= crate::MAX_SYNTAX_DEPTH {
+                return Err(nesting_error());
+            }
+            depth.set(depth.get() + 1);
+            Ok(Self)
+        })
+    }
+}
+
+impl Drop for ParseDepth {
+    fn drop(&mut self) {
+        PARSE_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+// Pratt parsing with a bound on every recursive operand, including unary
+// chains. Checking the resulting tree alone would happen too late.
+fn parse_expression(input: &mut &str, min_power: i64) -> winnow::ModalResult<ValueExpr> {
+    let _depth = ParseDepth::enter()?;
+    let mut operand = if let Some(operand) = opt(parse_non_op_expr).parse_next(input)? {
+        operand
+    } else {
+        let Prefix(power, fold) = parse_expression_prefix(input)?;
+        let operand = parse_expression(input, power)?;
+        fold(input, operand)?
+    };
+    loop {
+        let start = *input;
+        let Some(infix) = opt(parse_expression_infix).parse_next(input)? else {
+            break;
+        };
+        let (left, right, fold) = match infix {
+            Infix::Left(power, fold) => (power, power + 1, fold),
+            Infix::Right(power, fold) => (power, power - 1, fold),
+            Infix::Neither(power, fold) => (power, power + 1, fold),
+        };
+        if left < min_power {
+            *input = start;
+            break;
+        }
+        let rhs = parse_expression(input, right)?;
+        operand = fold(input, operand, rhs)?;
+    }
+    Ok(operand)
 }
 
 fn parse_expression_prefix<'a>(
@@ -298,7 +486,7 @@ fn parse_expression_prefix<'a>(
     macro_rules! prefix {
         ($precedence:literal, $op:ident) => {
             winnow::combinator::Prefix($precedence, |_, expr| {
-                Ok(ValueExpr::PrefixOperator($op, Box::new(expr)))
+                bounded_expression(ValueExpr::PrefixOperator($op, Box::new(expr)))
             })
         };
     }
@@ -321,7 +509,7 @@ fn parse_expression_infix<'a>(
     macro_rules! infix {
         ($precedence:literal, $op:ident) => {
             winnow::combinator::Infix::Left($precedence, |_, a, b| {
-                Ok(ValueExpr::InfixOperator($op, Box::new(a), Box::new(b)))
+                bounded_expression(ValueExpr::InfixOperator($op, Box::new(a), Box::new(b)))
             })
         };
     }
@@ -494,365 +682,4 @@ fn parse_comment<'a>(input: &mut &'a str) -> winnow::ModalResult<&'a str> {
 // MARK: Test
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    use std::assert_matches;
-
-    macro_rules! assert_ident {
-        ($expression:expr, $expected:literal $(,)?) => {
-            assert!(check_identx(&$expression, $expected));
-        };
-        ($expression:expr, $expected:literal, $($arg:tt)+) => {
-            assert!(check_identx(&$expression, $expected), $($arg)+);
-        };
-    }
-
-    fn check_identx(expr: &ValueExpr, expected: &str) -> bool {
-        let identx = match expr {
-            ValueExpr::Identx(identx) => identx,
-            _ => panic!(),
-        };
-        identx.ident == expected
-    }
-
-    fn unwrap_infix(expr: ValueExpr) -> (Operator, ValueExpr, ValueExpr) {
-        if let ValueExpr::InfixOperator(op, lhs, rhs) = expr {
-            (op, *lhs, *rhs)
-        } else {
-            panic!();
-        }
-    }
-
-    fn unwrap_prefix(expr: ValueExpr) -> (Operator, ValueExpr) {
-        if let ValueExpr::PrefixOperator(op, expr) = expr {
-            (op, *expr)
-        } else {
-            panic!();
-        }
-    }
-
-    fn unwrap_parens(expr: ValueExpr) -> ValueExpr {
-        if let ValueExpr::Parens(expr) = expr {
-            *expr
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn test_luamin_lex() {
-        const INPUT1: &str = r#"
-
-            local foo,bar=1, nil,3
-
-            foo,bar=1, nil,3
-
-        "#;
-        let (directive, stmts) = luamin_lex(INPUT1).unwrap();
-        assert!(directive.param_list.is_none());
-        assert!(directive.list_base_index.is_none());
-        assert_eq!(stmts.len(), 2);
-
-        const INPUT2: &str = r#"
-            #param p1,p2
-            #index 0
-            #index 1
-            local foo,bar=1, nil,3
-
-            foo,bar=1, nil,3
-
-        "#;
-        let (directive, stmts) = luamin_lex(INPUT2).unwrap();
-        assert_eq!(directive.param_list.unwrap(), vec!["p1", "p2"]);
-        assert_eq!(directive.list_base_index.unwrap(), 1);
-        assert_eq!(stmts.len(), 2);
-    }
-
-    #[test]
-    fn test_parse_stmt() {
-        let stmt = parse_stmt.parse("local foo,bar=1, nil,3").unwrap();
-        assert_matches!(stmt, Stmt::Decl(_));
-        let stmt = parse_stmt.parse("foo,bar=1, nil,3").unwrap();
-        assert_matches!(stmt, Stmt::Assign(_));
-    }
-
-    #[test]
-    fn test_parse_param_list_stmt() {
-        let stmt = parse_param_list.parse("#param foo,bar").unwrap();
-        assert_eq!(stmt, vec!["foo", "bar"]);
-    }
-
-    #[test]
-    fn test_parse_decl_stmt() {
-        let stmt = parse_decl_stmt.parse("local foo,bar=1, nil,3").unwrap();
-        assert_eq!(stmt.idents, vec!["foo", "bar"]);
-        assert_eq!(stmt.exprs.len(), 3);
-        assert_matches!(stmt.exprs[0], ValueExpr::Literal(LiteralExpr::Number(1)));
-        assert_matches!(stmt.exprs[1], ValueExpr::Literal(LiteralExpr::Nil));
-        assert_matches!(stmt.exprs[2], ValueExpr::Literal(LiteralExpr::Number(3)));
-    }
-
-    #[test]
-    fn test_parse_do_stmt() {
-        let stmt = parse_do_stmt.parse("do foo,bar=1, nil,3; end").unwrap();
-        assert_eq!(stmt.len(), 2);
-        assert_matches!(stmt[0], Stmt::Assign(_));
-        assert_matches!(stmt[1], Stmt::Semicolon);
-    }
-
-    #[test]
-    fn test_parse_if_stmt() {
-        let stmt = parse_if_stmt.parse("if a then b = 10 end").unwrap();
-        assert_matches!(stmt.condition, ValueExpr::Identx(IdentxExpr { ident, indexing_exprs, .. }) if ident == "a" && indexing_exprs.is_empty());
-        assert!(stmt.elseif_branches.is_empty());
-        assert!(stmt.else_branch.is_none());
-
-        let stmt = parse_if_stmt
-            .parse("if a then b = 10 elseif c then d = 20 elseif e then f = 30 end")
-            .unwrap();
-        assert_eq!(stmt.elseif_branches.len(), 2);
-        assert!(stmt.else_branch.is_none());
-
-        let stmt = parse_if_stmt
-            .parse("if a then b = 10 else c = 20 end")
-            .unwrap();
-        assert!(stmt.elseif_branches.is_empty());
-        assert!(stmt.else_branch.is_some());
-
-        let stmt = parse_if_stmt
-            .parse("if a then b = 10 elseif c then d = 20 else e = 30 end")
-            .unwrap();
-        assert_eq!(stmt.elseif_branches.len(), 1);
-        assert!(stmt.else_branch.is_some());
-    }
-
-    #[test]
-    fn test_parse_assign_stmt() {
-        let stmt = parse_assign_stmt.parse("foo,bar=1, nil,3").unwrap();
-        assert_eq!(stmt.left_exprs.len(), 2);
-        assert_matches!(stmt.left_exprs[0], PlaceExpr { ident: ref s, .. } if s == "foo");
-        assert_matches!(stmt.left_exprs[1], PlaceExpr { ident: ref s, .. } if s == "bar");
-        assert_eq!(stmt.right_exprs.len(), 3);
-        assert_matches!(
-            stmt.right_exprs[0],
-            ValueExpr::Literal(LiteralExpr::Number(1))
-        );
-        assert_matches!(stmt.right_exprs[1], ValueExpr::Literal(LiteralExpr::Nil));
-        assert_matches!(
-            stmt.right_exprs[2],
-            ValueExpr::Literal(LiteralExpr::Number(3))
-        );
-    }
-
-    #[test]
-    fn test_parse_expr() {
-        let expr = parse_value_expr.parse("1 +   foo*_Bar").unwrap();
-        let (op, lhs, rhs) = unwrap_infix(expr);
-        assert_eq!(op, Operator::Plus);
-        assert_matches!(lhs, ValueExpr::Literal(LiteralExpr::Number(1)));
-        let (op, lhs, rhs) = unwrap_infix(rhs);
-        assert_eq!(op, Operator::Asterisk);
-        assert_ident!(lhs, "foo");
-        assert_ident!(rhs, "_Bar");
-
-        let expr = parse_value_expr.parse("foo*(  3 + -a)<bar").unwrap();
-        let (op, lhs, rhs) = unwrap_infix(expr);
-        assert_eq!(op, Operator::Lt);
-        assert_ident!(rhs, "bar");
-        let (op, lhs, rhs) = unwrap_infix(lhs);
-        assert_eq!(op, Operator::Asterisk);
-        assert_ident!(lhs, "foo");
-        let rhs = unwrap_parens(rhs);
-        let (op, lhs, rhs) = unwrap_infix(rhs);
-        assert_eq!(op, Operator::Plus);
-        assert_matches!(lhs, ValueExpr::Literal(LiteralExpr::Number(3)));
-        let (op, expr) = unwrap_prefix(rhs);
-        assert_eq!(op, Operator::Minus);
-        assert_ident!(expr, "a");
-
-        // A lexically valid expression but is not semantically valid. Only for testing.
-        let expr = parse_value_expr.parse("a<<3<4<=5").unwrap();
-        let (op, lhs, rhs) = unwrap_infix(expr);
-        assert_eq!(op, Operator::Lte);
-        assert_matches!(rhs, ValueExpr::Literal(LiteralExpr::Number(5)));
-        let (op, lhs, rhs) = unwrap_infix(lhs);
-        assert_eq!(op, Operator::Lt);
-        assert_matches!(rhs, ValueExpr::Literal(LiteralExpr::Number(4)));
-        let (op, lhs, rhs) = unwrap_infix(lhs);
-        assert_eq!(op, Operator::Lshift);
-        assert_ident!(lhs, "a");
-        assert_matches!(rhs, ValueExpr::Literal(LiteralExpr::Number(3)));
-    }
-
-    #[test]
-    fn test_parse_non_op_expr() {
-        let expr = parse_non_op_expr.parse("0").unwrap();
-        assert_matches!(expr, ValueExpr::Literal(LiteralExpr::Number(0)));
-        let expr = parse_non_op_expr.parse("42").unwrap();
-        assert_matches!(expr, ValueExpr::Literal(LiteralExpr::Number(42)));
-        let expr = parse_non_op_expr.parse("-42  ").unwrap();
-        assert_matches!(expr, ValueExpr::Literal(LiteralExpr::Number(-42)));
-        let expr = parse_non_op_expr.parse("nil").unwrap();
-        assert_matches!(expr, ValueExpr::Literal(LiteralExpr::Nil));
-        let expr = parse_non_op_expr.parse("true  ").unwrap();
-        assert_matches!(expr, ValueExpr::Literal(LiteralExpr::Bool(true)));
-
-        let expr = parse_non_op_expr.parse("fooBar").unwrap();
-        assert_ident!(expr, "fooBar");
-        let expr = parse_non_op_expr.parse("_foo   ").unwrap();
-        assert_ident!(expr, "_foo");
-        assert!(parse_non_op_expr.parse("1foo").is_err());
-    }
-
-    #[test]
-    fn test_parse_literal_list() {
-        let expr = parse_literal_list.parse("{1,2,  a }  ").unwrap();
-        assert_eq!(expr.len(), 3);
-        assert_matches!(expr[0], ValueExpr::Literal(LiteralExpr::Number(1)));
-        assert_matches!(expr[1], ValueExpr::Literal(LiteralExpr::Number(2)));
-        assert_ident!(expr[2], "a");
-    }
-
-    #[test]
-    fn test_parse_identx_expr() {
-        let expr = parse_identx.parse("foo [  1][a  ]").unwrap();
-        assert_eq!(expr.ident, "foo");
-        assert_eq!(expr.indexing_exprs.len(), 2);
-        assert!(expr.call_args.is_none());
-        assert_matches!(
-            expr.indexing_exprs[0],
-            ValueExpr::Literal(LiteralExpr::Number(1))
-        );
-        let expr = match &expr.indexing_exprs[1] {
-            ValueExpr::Identx(identx) => identx,
-            _ => panic!(),
-        };
-        assert_eq!(expr.ident, "a");
-
-        let expr = parse_identx.parse("foo ( 1, 2 )").unwrap();
-        assert_eq!(expr.ident, "foo");
-        assert!(expr.indexing_exprs.is_empty());
-        let call_args = expr.call_args.unwrap();
-        assert_eq!(call_args.len(), 2);
-        assert_matches!(call_args[0], ValueExpr::Literal(LiteralExpr::Number(1)));
-        assert_matches!(call_args[1], ValueExpr::Literal(LiteralExpr::Number(2)));
-
-        let expr = parse_identx.parse("foo()[1][2]").unwrap();
-        assert_eq!(expr.ident, "foo");
-        assert_eq!(expr.indexing_exprs.len(), 2);
-        let call_args = expr.call_args.unwrap();
-        assert!(call_args.is_empty());
-    }
-
-    #[test]
-    fn test_parse_place_expr() {
-        let PlaceExpr {
-            ident,
-            indexing_exprs,
-        } = parse_place_expr.parse("foo[1]").unwrap();
-        assert_eq!(ident, "foo");
-        assert_eq!(indexing_exprs.len(), 1);
-        assert_matches!(
-            indexing_exprs[0],
-            ValueExpr::Literal(LiteralExpr::Number(1))
-        );
-
-        let PlaceExpr {
-            ident,
-            indexing_exprs,
-        } = parse_place_expr.parse("foo [  1][2  ]").unwrap();
-        assert_eq!(ident, "foo");
-        assert_eq!(indexing_exprs.len(), 2);
-        assert_matches!(
-            indexing_exprs[0],
-            ValueExpr::Literal(LiteralExpr::Number(1))
-        );
-        assert_matches!(
-            indexing_exprs[1],
-            ValueExpr::Literal(LiteralExpr::Number(2))
-        );
-
-        let PlaceExpr {
-            ident,
-            indexing_exprs,
-        } = parse_place_expr.parse("foo [  bar[a]][2  ]").unwrap();
-        assert_eq!(ident, "foo");
-        assert_eq!(indexing_exprs.len(), 2);
-        assert_matches!(
-            indexing_exprs[1],
-            ValueExpr::Literal(LiteralExpr::Number(2))
-        );
-
-        let identx = match indexing_exprs[0].clone() {
-            ValueExpr::Identx(identx) => identx,
-            _ => panic!(),
-        };
-        assert_eq!(identx.ident, "bar");
-        assert_eq!(identx.indexing_exprs.len(), 1);
-        let expr = match &identx.indexing_exprs[0] {
-            ValueExpr::Identx(identx) => identx,
-            _ => panic!(),
-        };
-        assert_eq!(expr.ident, "a");
-    }
-
-    #[test]
-    fn test_parse_literal_hash_string() {
-        let expr = parse_literal_hash_string
-            .parse(r#"h" Hello. I'm a \"string\"!\n ""#)
-            .unwrap();
-        assert_eq!(expr, " Hello. I'm a \"string\"!\n ");
-
-        let result = parse_literal_hash_string.parse(r#" h"Invalid unescaped "double quote"" "#);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_with_comments() {
-        let (_directive, stmts) = luamin_lex(
-            r#"
-            -- initial comment
-            local a = 42   -- forty-two  
-
-            a+=100--increment by 100
-            -- a whole line comment --
-            -- another whole line comment
-            a -= 10--
-            local -- separated by comment
-            b--
-            =--
-            --
-            {--
-            true -- 
-            }--
-            return a --return the value
-        "#,
-        )
-        .unwrap();
-        assert_eq!(stmts.len(), 5);
-        assert_matches!(stmts[0], Stmt::Decl(_));
-        assert_matches!(stmts[1], Stmt::CompoundAssign(_));
-        assert_matches!(stmts[2], Stmt::CompoundAssign(_));
-        assert_matches!(stmts[3], Stmt::Decl(_));
-        assert_matches!(stmts[4], Stmt::Return(_));
-    }
-
-    #[test]
-    #[ignore]
-    fn test_show_ast() {
-        let input = r#"
-            local function = 4
-        "#;
-        match luamin_lex(input) {
-            Ok(stmts) => {
-                println!("Lex success");
-                println!("{:#?}", stmts);
-            }
-            Err(e) => {
-                println!("Lex error");
-                println!("{}", e);
-            }
-        }
-    }
-}
+mod tests;

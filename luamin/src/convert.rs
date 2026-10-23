@@ -1,9 +1,12 @@
-use std::{any::Any, cell::RefCell, mem::MaybeUninit, rc::Rc};
+use std::{any::Any, cell::RefCell, rc::Rc};
 
 use arrayvec::ArrayVec;
 use smallvec::SmallVec;
 
 use crate::runtime::{LuaminUserValue, LuaminValue};
+
+#[cfg(test)]
+mod tests;
 
 pub trait FromLuamin
 where
@@ -275,28 +278,11 @@ impl<T, const N: usize> IterHandlerAux<T, [T; N]> for ArrayHandler<T, N> {
             return None;
         }
 
-        let mut arr: [MaybeUninit<T>; N] = [const { MaybeUninit::uninit() }; N];
-
-        for (i, value) in iter.enumerate() {
-            match value {
-                Some(value) => {
-                    arr[i].write(value);
-                }
-                None => {
-                    let initialized_slice =
-                        std::ptr::slice_from_raw_parts_mut(arr.as_mut_ptr() as *mut T, i);
-                    unsafe {
-                        std::ptr::drop_in_place(initialized_slice);
-                    }
-                    return None;
-                }
-            }
+        let mut values = ArrayVec::<T, N>::new();
+        for value in iter {
+            values.try_push(value?).ok()?;
         }
-
-        unsafe {
-            let ptr = &arr as *const _ as *const [T; N];
-            Some(ptr.read())
-        }
+        values.into_inner().ok()
     }
 }
 

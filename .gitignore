@@ -1,9 +1,6 @@
 # Rust build artifacts
 /target/
 
-# Cargo lockfile (library-only workspace)
-Cargo.lock
-
 # IDE / Editor
 .idea/
 .vscode/
