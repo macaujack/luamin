@@ -162,7 +162,7 @@ fn test_compile_and_execute() {
         )
         .unwrap();
     let state = State::default();
-    let mut gas = LuaminGas::INF;
+    let mut gas = LuaminGas::MAX;
     let mut return_values = state
         .execute_luamin_script(
             &mut gas,
@@ -186,7 +186,7 @@ fn test_array_conversion() {
         )
         .unwrap();
     let mut state = State::default();
-    let mut gas = LuaminGas::INF;
+    let mut gas = LuaminGas::MAX;
     let return_values = state
         .execute_luamin_script_mut(
             &mut gas,
@@ -214,7 +214,7 @@ fn test_raw_list_conversion() {
         )
         .unwrap();
     let state = State::default();
-    let mut gas = LuaminGas::INF;
+    let mut gas = LuaminGas::MAX;
     let return_values = state
         .execute_luamin_script(&mut gas, &luamin_script, &[])
         .unwrap();
@@ -246,7 +246,7 @@ fn test_gas_exceeded() {
         .unwrap();
     let state = State::default();
 
-    let mut gas = LuaminGas::INF;
+    let mut gas = LuaminGas::MAX;
     let return_values = state
         .execute_luamin_script(&mut gas, &luamin_script, &[])
         .unwrap();

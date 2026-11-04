@@ -130,8 +130,8 @@ impl std::fmt::Display for LuaminGas {
 }
 
 impl LuaminGas {
-    /// Large finite budget of one billion units; this is not unlimited gas.
-    pub const INF: Self = Self(1_000_000_000);
+    /// Largest finite budget (`i32::MAX` units), consumed normally during execution.
+    pub const MAX: Self = Self(i32::MAX);
 
     /// Creates a budget; a negative amount creates an already-exhausted budget.
     pub const fn new(gas: i32) -> Self {

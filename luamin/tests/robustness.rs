@@ -34,6 +34,12 @@ fn run(
 
 #[test]
 fn gas_exhaustion_is_sticky_and_cannot_overflow_or_replenish() {
+    let mut max_gas = LuaminGas::MAX;
+    assert_eq!(max_gas, LuaminGas::new(i32::MAX));
+    assert!(!max_gas.consume(i32::MAX - 1));
+    assert!(!max_gas.consume(1));
+    assert!(max_gas.consume(1));
+
     for initial in [i32::MIN, -1, 0, 1, i32::MAX] {
         for cost in [i32::MIN, -1, 0, 1, i32::MAX] {
             let mut gas = LuaminGas::new(initial);

@@ -139,7 +139,7 @@ fn compile_and_execute_mut(
         println!("<{}> {:?}", i, ix);
     }
     println!("#################################");
-    let mut gas = LuaminGas::INF;
+    let mut gas = LuaminGas::MAX;
     let stack: SmallVec<[LuaminValue; 4]> =
         luamin_execute_mut(&mut state, &mut gas, &script, initial_stack)?.collect();
     Ok((stack, state))
