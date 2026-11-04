@@ -19,7 +19,7 @@ use crate::component::{
 /// Category of source parsing failure; additional categories may be added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum LexErrorKind {
+pub enum ParseErrorKind {
     /// Source does not match the supported grammar.
     Syntax,
     /// Source exceeds [`crate::MAX_SOURCE_BYTES`].
@@ -35,9 +35,9 @@ pub enum LexErrorKind {
 /// The display representation includes the message, line, and column.
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("{message} at line {line}, column {column}")]
-pub struct LexError {
+pub struct ParseError {
     /// Machine-readable error category.
-    pub kind: LexErrorKind,
+    pub kind: ParseErrorKind,
     /// Zero-based UTF-8 byte offset in the original source.
     pub offset: usize,
     /// One-based source line number.
@@ -47,8 +47,8 @@ pub struct LexError {
     message: String,
 }
 
-impl LexError {
-    fn new(input: &str, offset: usize, kind: LexErrorKind, message: impl Into<String>) -> Self {
+impl ParseError {
+    fn new(input: &str, offset: usize, kind: ParseErrorKind, message: impl Into<String>) -> Self {
         let before = &input[..offset];
         let line = before.bytes().filter(|b| *b == b'\n').count() + 1;
         let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
@@ -64,20 +64,19 @@ impl LexError {
 
 /// Parses source into its directives and statement tree.
 ///
-/// Despite its name, this function performs syntax parsing, not only tokenization.
 /// Host function resolution and semantic checks occur during code generation.
 ///
 /// # Errors
 ///
-/// Returns [`LexError`] for invalid syntax, oversized source, excessive nesting,
+/// Returns [`ParseError`] for invalid syntax, oversized source, excessive nesting,
 /// or a syntax tree exceeding the node limit. Some complexity diagnostics point
 /// at the start of the source rather than an individual offending node.
-pub fn luamin_lex(input: &str) -> Result<(Directive, Vec<Stmt>), LexError> {
+pub fn luamin_parse(input: &str) -> Result<(Directive, Vec<Stmt>), ParseError> {
     if input.len() > crate::MAX_SOURCE_BYTES {
-        return Err(LexError::new(
+        return Err(ParseError::new(
             input,
             0,
-            LexErrorKind::SourceTooLarge,
+            ParseErrorKind::SourceTooLarge,
             "Source byte limit exceeded",
         ));
     }
@@ -89,17 +88,17 @@ pub fn luamin_lex(input: &str) -> Result<(Directive, Vec<Stmt>), LexError> {
             .context()
             .any(|c| matches!(c, StrContext::Label("syntax nesting limit")))
         {
-            LexErrorKind::NestingTooDeep
+            ParseErrorKind::NestingTooDeep
         } else {
-            LexErrorKind::Syntax
+            ParseErrorKind::Syntax
         };
-        LexError::new(input, skipped + e.offset(), kind, e.inner().to_string())
+        ParseError::new(input, skipped + e.offset(), kind, e.inner().to_string())
     })?;
     if !crate::limits::validate(&stmts) {
-        return Err(LexError::new(
+        return Err(ParseError::new(
             input,
             0,
-            LexErrorKind::NestingTooDeep,
+            ParseErrorKind::NestingTooDeep,
             "Syntax tree limit exceeded",
         ));
     }

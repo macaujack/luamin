@@ -4,7 +4,7 @@ use smallvec::smallvec;
 use crate::{
     codegen::LuaminCodegen,
     func_lib::{FuncPointer, HostFuncDef, HostFuncLibBuf},
-    lexer::luamin_lex,
+    parser::luamin_parse,
 };
 
 use super::*;
@@ -16,7 +16,7 @@ struct State {
 
 #[derive(Debug, Clone)]
 struct StateLifetimeProvider;
-impl FuncPointerStateLifetimeProvider for StateLifetimeProvider {
+impl HostStateProvider for StateLifetimeProvider {
     type StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = State;
 }
 
@@ -132,10 +132,10 @@ fn compile_and_execute_mut(
 ) -> Result<(SmallVec<[LuaminValue; 4]>, State), GasError<LuaminRuntimeError<TestError>>> {
     let mut state = State { score: 0 };
     let mut codegen = LuaminCodegen::new(get_func_lib(), 1);
-    let (directive, stmts) = luamin_lex(input).unwrap();
+    let (directive, stmts) = luamin_parse(input).unwrap();
     let (script, _) = codegen.codegen_mut(&[], &directive, &stmts).unwrap();
     println!("IXs:");
-    for (i, ix) in script.ixs().iter().enumerate() {
+    for (i, ix) in script.instructions().iter().enumerate() {
         println!("<{}> {:?}", i, ix);
     }
     println!("#################################");

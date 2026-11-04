@@ -4,12 +4,12 @@ use smol_str::SmolStr;
 use crate::{
     MAX_RUNTIME_STACK_SIZE,
     component::{
-        CompoundAssignOperator, Directive, ElseifBranch, IfStmt, Ix, ListForStmt, LiteralExpr,
-        NumericForStmt, Operator, PlaceExpr, RepeatStmt, Stmt,
+        CompoundAssignOperator, Directive, ElseifBranch, IfStmt, Instruction, ListForStmt,
+        LiteralExpr, NumericForStmt, Operator, PlaceExpr, RepeatStmt, Stmt,
         ValueExpr::{self},
         WhileStmt,
     },
-    func_lib::{FuncPointerStateLifetimeProvider, HostFuncLib},
+    func_lib::{HostFuncLib, HostStateProvider},
     hash_string,
 };
 
@@ -60,15 +60,20 @@ pub enum LuaminCodegenError {
 /// Reusable instruction generator for parsed syntax trees.
 ///
 /// Use [`crate::LuaminCompiler`] to parse and compile source in one step.
-/// `SLP` supplies host state lifetimes, `LE` is the host error type, and `X`
+/// `StateProvider` supplies host state lifetimes, `HostError` is the host error type, and `Extra`
 /// is per-function metadata. Generated scripts borrow the library for `'f`.
 #[derive(Debug, Clone)]
-pub struct LuaminCodegen<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
-    func_lib: &'f HostFuncLib<SLP, LE, X>,
+pub struct LuaminCodegen<
+    'f,
+    StateProvider: HostStateProvider,
+    HostError: 'static,
+    Extra: 'static = (),
+> {
+    func_lib: &'f HostFuncLib<StateProvider, HostError, Extra>,
     default_list_base_index: i8,
     declared_idents: SmallVec<[DeclaredIdent; 10]>,
     list_base_index: i8,
-    ixs: Vec<Ix>,
+    instructions: Vec<Instruction>,
     runtime_stack_size: usize,
     early_return_indices: SmallVec<[usize; 4]>,
     loop_contexts: SmallVec<[LoopContext; 4]>,
@@ -81,44 +86,54 @@ pub struct LuaminCodegen<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static,
 /// The script borrows its host library. Shared list values and host state with
 /// interior mutability may still be modified. Execute with [`crate::luamin_execute`].
 #[derive(Debug, Clone)]
-pub struct LuaminScript<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
-    func_lib: &'f HostFuncLib<SLP, LE, X>,
-    ixs: Box<[Ix]>,
+pub struct LuaminScript<
+    'f,
+    StateProvider: HostStateProvider,
+    HostError: 'static,
+    Extra: 'static = (),
+> {
+    func_lib: &'f HostFuncLib<StateProvider, HostError, Extra>,
+    instructions: Box<[Instruction]>,
 }
 
-impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
-    LuaminScript<'f, SLP, LE, X>
+impl<'f, StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>
+    LuaminScript<'f, StateProvider, HostError, Extra>
 {
     /// Returns the host library to which this script is bound.
-    pub fn func_lib(&self) -> &HostFuncLib<SLP, LE, X> {
+    pub fn host_func_lib(&self) -> &HostFuncLib<StateProvider, HostError, Extra> {
         self.func_lib
     }
     /// Returns the generated virtual machine instructions in execution order.
-    pub fn ixs(&self) -> &[Ix] {
-        &self.ixs
+    pub fn instructions(&self) -> &[Instruction] {
+        &self.instructions
     }
 }
 
 /// Compiled instructions that may call host methods requiring exclusive state access.
 ///
+/// `Mut` describes access to the host state, not mutation of the compiled instructions.
 /// The script borrows its host library. Execute with [`crate::luamin_execute_mut`].
 #[derive(Debug, Clone)]
-pub struct LuaminScriptMut<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()>
-{
-    func_lib: &'f HostFuncLib<SLP, LE, X>,
-    ixs: Box<[Ix]>,
+pub struct LuaminScriptMut<
+    'f,
+    StateProvider: HostStateProvider,
+    HostError: 'static,
+    Extra: 'static = (),
+> {
+    func_lib: &'f HostFuncLib<StateProvider, HostError, Extra>,
+    instructions: Box<[Instruction]>,
 }
 
-impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
-    LuaminScriptMut<'f, SLP, LE, X>
+impl<'f, StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>
+    LuaminScriptMut<'f, StateProvider, HostError, Extra>
 {
     /// Returns the host library to which this script is bound.
-    pub fn func_lib(&self) -> &HostFuncLib<SLP, LE, X> {
+    pub fn host_func_lib(&self) -> &HostFuncLib<StateProvider, HostError, Extra> {
         self.func_lib
     }
     /// Returns the generated virtual machine instructions in execution order.
-    pub fn ixs(&self) -> &[Ix] {
-        &self.ixs
+    pub fn instructions(&self) -> &[Instruction] {
+        &self.instructions
     }
 }
 
@@ -149,21 +164,24 @@ impl LoopContext {
     }
 }
 
-impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
-    LuaminCodegen<'f, SLP, LE, X>
+impl<'f, StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>
+    LuaminCodegen<'f, StateProvider, HostError, Extra>
 {
     /// Creates a reusable generator bound to `func_lib`.
     ///
     /// `default_list_base_index` identifies the first list element in script indexing;
     /// a parsed directive can override it for an individual compilation.
-    pub fn new(func_lib: &'f HostFuncLib<SLP, LE, X>, default_list_base_index: i8) -> Self {
+    pub fn new(
+        func_lib: &'f HostFuncLib<StateProvider, HostError, Extra>,
+        default_list_base_index: i8,
+    ) -> Self {
         Self {
             func_lib,
             default_list_base_index,
             declared_idents: SmallVec::new(),
             list_base_index: default_list_base_index,
             // TODO: Use a better initial capacity.
-            ixs: Vec::with_capacity(64),
+            instructions: Vec::with_capacity(64),
             runtime_stack_size: 0,
             early_return_indices: SmallVec::new(),
             loop_contexts: SmallVec::new(),
@@ -192,13 +210,19 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         intrinsic_param_idents: &[SmolStr],
         directive: &Directive,
         stmts: &[Stmt],
-    ) -> Result<(LuaminScript<'f, SLP, LE, X>, Vec<usize>), LuaminCodegenError> {
-        let (ixs, used_lib_func_indices) =
+    ) -> Result<
+        (
+            LuaminScript<'f, StateProvider, HostError, Extra>,
+            Vec<usize>,
+        ),
+        LuaminCodegenError,
+    > {
+        let (instructions, used_lib_func_indices) =
             self.codegen_aux(intrinsic_param_idents, directive, stmts, false)?;
         Ok((
             LuaminScript {
                 func_lib: self.func_lib,
-                ixs,
+                instructions,
             },
             used_lib_func_indices,
         ))
@@ -214,13 +238,19 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         intrinsic_param_idents: &[SmolStr],
         directive: &Directive,
         stmts: &[Stmt],
-    ) -> Result<(LuaminScriptMut<'f, SLP, LE, X>, Vec<usize>), LuaminCodegenError> {
-        let (ixs, used_lib_func_indices) =
+    ) -> Result<
+        (
+            LuaminScriptMut<'f, StateProvider, HostError, Extra>,
+            Vec<usize>,
+        ),
+        LuaminCodegenError,
+    > {
+        let (instructions, used_lib_func_indices) =
             self.codegen_aux(intrinsic_param_idents, directive, stmts, true)?;
         Ok((
             LuaminScriptMut {
                 func_lib: self.func_lib,
-                ixs,
+                instructions,
             },
             used_lib_func_indices,
         ))
@@ -232,7 +262,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         directive: &Directive,
         stmts: &[Stmt],
         is_mutable_state: bool,
-    ) -> Result<(Box<[Ix]>, Vec<usize>), LuaminCodegenError> {
+    ) -> Result<(Box<[Instruction]>, Vec<usize>), LuaminCodegenError> {
         if !crate::limits::validate(stmts) {
             return Err(LuaminCodegenError::InvalidSyntaxTree);
         }
@@ -249,7 +279,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         self.list_base_index = directive
             .list_base_index
             .unwrap_or(self.default_list_base_index);
-        self.ixs.clear();
+        self.instructions.clear();
         self.runtime_stack_size = 0;
         self.early_return_indices.clear();
         self.loop_contexts.clear();
@@ -270,15 +300,15 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         }
 
         let parameter_count = (intrinsic_param_idents.len() + declared_param_idents.len()) as u8;
-        self.push_ix(Ix::AdjustStack {
+        self.push_ix(Instruction::AdjustStack {
             adjust_count: parameter_count,
         })?;
         let _root_scope_returned = self.gen_scope_statements::<true>(stmts)?;
 
-        let ixs_len = self.ixs.len() as i32;
+        let ixs_len = self.instructions.len() as i32;
         for early_return_index in self.early_return_indices.iter().cloned() {
-            match &mut self.ixs[early_return_index] {
-                Ix::Jump { relative_offset } => {
+            match &mut self.instructions[early_return_index] {
+                Instruction::Jump { relative_offset } => {
                     *relative_offset = ixs_len - 1 - early_return_index as i32
                 }
                 _ => unreachable!("Early return index must be a Jump ix"),
@@ -288,7 +318,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         self.used_lib_func_indices.dedup();
 
         Ok((
-            self.ixs.clone().into_boxed_slice(),
+            self.instructions.clone().into_boxed_slice(),
             self.used_lib_func_indices.clone(),
         ))
     }
@@ -344,15 +374,15 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                         for (i, place_expr) in s.left_exprs.iter().rev().enumerate() {
                             match place_expr.indexing_exprs.len() {
                                 0 => {
-                                    self.push_ix(Ix::Dup {
+                                    self.push_ix(Instruction::Dup {
                                         stack_index: (self.runtime_stack_size - 1 - i) as u8,
                                     })?;
                                 }
                                 1.. => {
-                                    self.push_ix(Ix::Dup {
+                                    self.push_ix(Instruction::Dup {
                                         stack_index: (left_ending_index - 1) as u8,
                                     })?;
-                                    self.push_ix(Ix::Dup {
+                                    self.push_ix(Instruction::Dup {
                                         stack_index: (self.runtime_stack_size - 2 - i) as u8,
                                     })?;
                                 }
@@ -370,7 +400,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     if self.runtime_stack_size > self.declared_idents.len() {
                         let pop_count =
                             (self.runtime_stack_size - self.declared_idents.len()) as u8;
-                        self.push_ix(Ix::Pop { pop_count })?;
+                        self.push_ix(Instruction::Pop { pop_count })?;
                     }
                 }
                 Stmt::CompoundAssign(s) => {
@@ -382,25 +412,25 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     match s.left_expr.indexing_exprs.len() {
                         0 => {
                             let stack_index = self.get_ident_stack_index(&s.left_expr.ident)?;
-                            self.push_ix(Ix::Dup {
+                            self.push_ix(Instruction::Dup {
                                 stack_index: stack_index as u8,
                             })?;
                         }
                         1 => {
                             let stack_index = self.get_ident_stack_index(&s.left_expr.ident)?;
-                            self.push_ix(Ix::Dup {
+                            self.push_ix(Instruction::Dup {
                                 stack_index: stmt_begin_stack_index as u8,
                             })?;
-                            self.push_ix(Ix::GetListElement {
+                            self.push_ix(Instruction::GetListElement {
                                 stack_index: stack_index as u8,
                                 base_index: self.list_base_index,
                             })?;
                         }
                         2.. => {
-                            self.push_ix(Ix::Dup {
+                            self.push_ix(Instruction::Dup {
                                 stack_index: (stmt_begin_stack_index + 1) as u8,
                             })?;
-                            self.push_ix(Ix::GetListElement {
+                            self.push_ix(Instruction::GetListElement {
                                 stack_index: stmt_begin_stack_index as u8,
                                 base_index: self.list_base_index,
                             })?;
@@ -410,16 +440,16 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     self.gen_value_expr(&s.right_expr, Some(1))?;
 
                     let arith_ix = match s.operator {
-                        PlusAssign => Ix::Add,
-                        MinusAssign => Ix::Sub,
-                        MulAssign => Ix::Mul,
-                        DivFloorAssign => Ix::DivFloor,
-                        ModAssign => Ix::Mod,
-                        BitAndAssign => Ix::BitAnd,
-                        BitOrAssign => Ix::BitOr,
-                        BitXorAssign => Ix::BitXor,
-                        LshiftAssign => Ix::Lshift,
-                        RshiftAssign => Ix::Rshift,
+                        PlusAssign => Instruction::Add,
+                        MinusAssign => Instruction::Sub,
+                        MulAssign => Instruction::Mul,
+                        DivFloorAssign => Instruction::DivFloor,
+                        ModAssign => Instruction::Mod,
+                        BitAndAssign => Instruction::BitAnd,
+                        BitOrAssign => Instruction::BitOr,
+                        BitXorAssign => Instruction::BitXor,
+                        LshiftAssign => Instruction::Lshift,
+                        RshiftAssign => Instruction::Rshift,
                     };
                     self.push_ix(arith_ix)?;
 
@@ -434,13 +464,13 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
 
                     // Pop the temporary left place expr
                     if s.left_expr.indexing_exprs.len() >= 2 {
-                        self.push_ix(Ix::Pop { pop_count: 1 })?;
+                        self.push_ix(Instruction::Pop { pop_count: 1 })?;
                     }
                 }
                 Stmt::Call(s) => {
                     let output_count = self.gen_func_call(&s.ident, &s.args)?;
                     if output_count > 0 {
-                        self.push_ix(Ix::Pop {
+                        self.push_ix(Instruction::Pop {
                             pop_count: output_count as u8,
                         })?;
                     }
@@ -460,16 +490,16 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     else_branch,
                 }) => {
                     self.gen_value_expr(condition, Some(1))?;
-                    let mut jump_to_next_index = self.ixs.len();
+                    let mut jump_to_next_index = self.instructions.len();
                     let mut jump_to_end_indices: SmallVec<[usize; 8]> = smallvec![];
-                    self.push_ix(Ix::JumpIfNot {
+                    self.push_ix(Instruction::JumpIfNot {
                         relative_offset: i32::MIN,
                     })?;
                     let returned = self.gen_scope_statements::<false>(stmts)?;
 
                     if (!elseif_branches.is_empty() || else_branch.is_some()) && !returned {
-                        jump_to_end_indices.push(self.ixs.len());
-                        self.push_ix(Ix::Jump {
+                        jump_to_end_indices.push(self.instructions.len());
+                        self.push_ix(Instruction::Jump {
                             relative_offset: i32::MIN,
                         })?;
                     }
@@ -477,9 +507,9 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     for (elseif_branch_index, else_if_branch) in elseif_branches.iter().enumerate()
                     {
                         let ElseifBranch { condition, stmts } = else_if_branch;
-                        let jump_to = self.ixs.len() as i32;
-                        match &mut self.ixs[jump_to_next_index] {
-                            Ix::JumpIfNot { relative_offset } => {
+                        let jump_to = self.instructions.len() as i32;
+                        match &mut self.instructions[jump_to_next_index] {
+                            Instruction::JumpIfNot { relative_offset } => {
                                 *relative_offset = jump_to - 1 - jump_to_next_index as i32;
                             }
                             _ => unreachable!(
@@ -487,8 +517,8 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                             ),
                         }
                         self.gen_value_expr(condition, Some(1))?;
-                        jump_to_next_index = self.ixs.len();
-                        self.push_ix(Ix::JumpIfNot {
+                        jump_to_next_index = self.instructions.len();
+                        self.push_ix(Instruction::JumpIfNot {
                             relative_offset: i32::MIN,
                         })?;
                         let returned = self.gen_scope_statements::<false>(stmts)?;
@@ -497,16 +527,16 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                             || else_branch.is_some())
                             && !returned
                         {
-                            jump_to_end_indices.push(self.ixs.len());
-                            self.push_ix(Ix::Jump {
+                            jump_to_end_indices.push(self.instructions.len());
+                            self.push_ix(Instruction::Jump {
                                 relative_offset: i32::MIN,
                             })?;
                         }
                     }
 
-                    let jump_to = self.ixs.len() as i32;
-                    match &mut self.ixs[jump_to_next_index] {
-                        Ix::JumpIfNot { relative_offset } => {
+                    let jump_to = self.instructions.len() as i32;
+                    match &mut self.instructions[jump_to_next_index] {
+                        Instruction::JumpIfNot { relative_offset } => {
                             *relative_offset = jump_to - 1 - jump_to_next_index as i32;
                             jump_to_next_index = usize::MAX;
                         }
@@ -517,10 +547,10 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                         let _returned = self.gen_scope_statements::<false>(stmts)?;
                     }
 
-                    let jump_to = self.ixs.len() as i32;
+                    let jump_to = self.instructions.len() as i32;
                     for jump_to_end_index in jump_to_end_indices {
-                        match &mut self.ixs[jump_to_end_index] {
-                            Ix::Jump { relative_offset } => {
+                        match &mut self.instructions[jump_to_end_index] {
+                            Instruction::Jump { relative_offset } => {
                                 *relative_offset = jump_to - 1 - jump_to_end_index as i32;
                             }
                             _ => unreachable!("Elseif/Else branch must be after a Jump ix"),
@@ -531,32 +561,32 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     self.loop_contexts
                         .push(LoopContext::new(self.runtime_stack_size, 0));
 
-                    let initial_jump_index = self.ixs.len();
-                    self.push_ix(Ix::Jump {
+                    let initial_jump_index = self.instructions.len();
+                    self.push_ix(Instruction::Jump {
                         relative_offset: i32::MIN,
                     })?;
 
-                    let while_begin_jump_to = self.ixs.len() as i32;
+                    let while_begin_jump_to = self.instructions.len() as i32;
                     let _returned = self.gen_scope_statements::<false>(stmts)?;
 
                     // Note here we will generate the condition no matter whether the while body
                     // contains a return statement or not, because this condition will at least be
                     // evaluated once by the initial jump.
-                    let initial_jump_to = self.ixs.len() as i32;
-                    let continue_jump_to = self.ixs.len() as i32;
-                    match &mut self.ixs[initial_jump_index] {
-                        Ix::Jump { relative_offset } => {
+                    let initial_jump_to = self.instructions.len() as i32;
+                    let continue_jump_to = self.instructions.len() as i32;
+                    match &mut self.instructions[initial_jump_index] {
+                        Instruction::Jump { relative_offset } => {
                             *relative_offset = initial_jump_to - 1 - initial_jump_index as i32;
                         }
                         _ => unreachable!("While statement initial jump must be a Jump ix"),
                     }
                     self.gen_value_expr(condition, Some(1))?;
-                    let current_index = self.ixs.len();
-                    self.push_ix(Ix::JumpIf {
+                    let current_index = self.instructions.len();
+                    self.push_ix(Instruction::JumpIf {
                         relative_offset: while_begin_jump_to - 1 - current_index as i32,
                     })?;
 
-                    let break_jump_to = self.ixs.len() as i32;
+                    let break_jump_to = self.instructions.len() as i32;
 
                     self.update_break_continue_jump_ixs(break_jump_to, continue_jump_to);
                 }
@@ -564,19 +594,19 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     self.loop_contexts
                         .push(LoopContext::new(self.runtime_stack_size, 0));
 
-                    let repeat_begin_jump_to = self.ixs.len() as i32;
+                    let repeat_begin_jump_to = self.instructions.len() as i32;
                     let _returned = self.gen_scope_statements::<false>(stmts)?;
 
                     // Note here we will generate the condition no matter whether the repeat body
                     // contains a return statement or not, because this condition will possibly be
                     // evaluated if there's a "continue" to skip the final "return".
-                    let continue_jump_to = self.ixs.len() as i32;
+                    let continue_jump_to = self.instructions.len() as i32;
                     self.gen_value_expr(condition, Some(1))?;
-                    let current_index = self.ixs.len();
-                    self.push_ix(Ix::JumpIfNot {
+                    let current_index = self.instructions.len();
+                    self.push_ix(Instruction::JumpIfNot {
                         relative_offset: repeat_begin_jump_to - 1 - current_index as i32,
                     })?;
-                    let break_jump_to = self.ixs.len() as i32;
+                    let break_jump_to = self.instructions.len() as i32;
 
                     self.update_break_continue_jump_ixs(break_jump_to, continue_jump_to);
                 }
@@ -606,44 +636,48 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     let end_stack_index = (self.declared_idents.len() - 2) as u8;
                     let cur_stack_index = (self.declared_idents.len() - 1) as u8;
 
-                    let initial_jump_index = self.ixs.len();
-                    self.push_ix(Ix::Jump {
+                    let initial_jump_index = self.instructions.len();
+                    self.push_ix(Instruction::Jump {
                         relative_offset: i32::MIN,
                     })?;
 
-                    let for_begin_jump_to = self.ixs.len() as i32;
+                    let for_begin_jump_to = self.instructions.len() as i32;
                     let _returned = self.gen_scope_statements::<false>(stmts)?;
 
-                    let continue_jump_to = self.ixs.len() as i32;
-                    self.push_ix(Ix::PushNumber(*step))?;
-                    self.push_ix(Ix::Add)?;
+                    let continue_jump_to = self.instructions.len() as i32;
+                    self.push_ix(Instruction::PushNumber(*step))?;
+                    self.push_ix(Instruction::Add)?;
 
-                    let initial_jump_to = self.ixs.len() as i32;
-                    match &mut self.ixs[initial_jump_index] {
-                        Ix::Jump { relative_offset } => {
+                    let initial_jump_to = self.instructions.len() as i32;
+                    match &mut self.instructions[initial_jump_index] {
+                        Instruction::Jump { relative_offset } => {
                             *relative_offset = initial_jump_to - 1 - initial_jump_index as i32;
                         }
                         _ => unreachable!("For statement initial jump must be a Jump ix"),
                     }
-                    self.push_ix(Ix::Dup {
+                    self.push_ix(Instruction::Dup {
                         stack_index: cur_stack_index,
                     })?;
-                    self.push_ix(Ix::Dup {
+                    self.push_ix(Instruction::Dup {
                         stack_index: end_stack_index,
                     })?;
-                    let cmp_ix = if *step > 0 { Ix::Lte } else { Ix::Gte };
+                    let cmp_ix = if *step > 0 {
+                        Instruction::Lte
+                    } else {
+                        Instruction::Gte
+                    };
                     self.push_ix(cmp_ix)?;
-                    let current_index = self.ixs.len();
-                    self.push_ix(Ix::JumpIf {
+                    let current_index = self.instructions.len();
+                    self.push_ix(Instruction::JumpIf {
                         relative_offset: for_begin_jump_to - 1 - current_index as i32,
                     })?;
 
                     // Pop the 2 loop level elements
-                    self.push_ix(Ix::Pop { pop_count: 2 })?;
+                    self.push_ix(Instruction::Pop { pop_count: 2 })?;
                     self.declared_idents
                         .truncate(self.declared_idents.len() - 2);
 
-                    let break_jump_to = self.ixs.len() as i32;
+                    let break_jump_to = self.instructions.len() as i32;
 
                     self.update_break_continue_jump_ixs(break_jump_to, continue_jump_to);
                 }
@@ -656,15 +690,15 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     self.loop_contexts
                         .push(LoopContext::new(self.runtime_stack_size, 3));
                     self.gen_value_expr(list, Some(1))?;
-                    self.push_ix(Ix::PushNumber(self.list_base_index as i32))?;
+                    self.push_ix(Instruction::PushNumber(self.list_base_index as i32))?;
                     {
                         let list_stack_index = self.runtime_stack_size - 2;
-                        self.push_ix(Ix::GetListElement {
+                        self.push_ix(Instruction::GetListElement {
                             stack_index: list_stack_index as u8,
                             base_index: self.list_base_index,
                         })?;
                     }
-                    self.push_ix(Ix::PushNumber(self.list_base_index as i32))?;
+                    self.push_ix(Instruction::PushNumber(self.list_base_index as i32))?;
                     self.declared_idents.extend([
                         DeclaredIdent {
                             ident: EMPTY_IDENT,
@@ -683,51 +717,51 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     let list_element_stack_index = (self.declared_idents.len() - 2) as u8;
                     let list_index_stack_index = (self.declared_idents.len() - 1) as u8;
 
-                    let initial_jump_index = self.ixs.len();
-                    self.push_ix(Ix::Jump {
+                    let initial_jump_index = self.instructions.len();
+                    self.push_ix(Instruction::Jump {
                         relative_offset: i32::MIN,
                     })?;
 
-                    let for_begin_jump_to = self.ixs.len() as i32;
+                    let for_begin_jump_to = self.instructions.len() as i32;
                     let _returned = self.gen_scope_statements::<false>(stmts)?;
 
-                    let continue_jump_to = self.ixs.len() as i32;
-                    self.push_ix(Ix::PushNumber(1))?;
-                    self.push_ix(Ix::Add)?;
-                    self.push_ix(Ix::Dup {
+                    let continue_jump_to = self.instructions.len() as i32;
+                    self.push_ix(Instruction::PushNumber(1))?;
+                    self.push_ix(Instruction::Add)?;
+                    self.push_ix(Instruction::Dup {
                         stack_index: list_index_stack_index,
                     })?;
-                    self.push_ix(Ix::GetListElement {
+                    self.push_ix(Instruction::GetListElement {
                         stack_index: list_stack_index,
                         base_index: self.list_base_index,
                     })?;
-                    self.push_ix(Ix::Set {
+                    self.push_ix(Instruction::Set {
                         stack_index: list_element_stack_index,
                     })?;
 
-                    let initial_jump_to = self.ixs.len() as i32;
-                    match &mut self.ixs[initial_jump_index] {
-                        Ix::Jump { relative_offset } => {
+                    let initial_jump_to = self.instructions.len() as i32;
+                    match &mut self.instructions[initial_jump_index] {
+                        Instruction::Jump { relative_offset } => {
                             *relative_offset = initial_jump_to - 1 - initial_jump_index as i32;
                         }
                         _ => unreachable!("For statement initial jump must be a Jump ix"),
                     }
-                    self.push_ix(Ix::Dup {
+                    self.push_ix(Instruction::Dup {
                         stack_index: list_element_stack_index,
                     })?;
-                    self.push_ix(Ix::PushNil { count: 1 })?;
-                    self.push_ix(Ix::Eq)?;
-                    let current_index = self.ixs.len();
-                    self.push_ix(Ix::JumpIfNot {
+                    self.push_ix(Instruction::PushNil { count: 1 })?;
+                    self.push_ix(Instruction::Eq)?;
+                    let current_index = self.instructions.len();
+                    self.push_ix(Instruction::JumpIfNot {
                         relative_offset: for_begin_jump_to - 1 - current_index as i32,
                     })?;
 
                     // Pop the 3 loop level elements
-                    self.push_ix(Ix::Pop { pop_count: 3 })?;
+                    self.push_ix(Instruction::Pop { pop_count: 3 })?;
                     self.declared_idents
                         .truncate(self.declared_idents.len() - 3);
 
-                    let break_jump_to = self.ixs.len() as i32;
+                    let break_jump_to = self.instructions.len() as i32;
 
                     self.update_break_continue_jump_ixs(break_jump_to, continue_jump_to);
                 }
@@ -762,11 +796,11 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                 );
                 if return_value_count < self.runtime_stack_size {
                     let return_remove_stack_ix = if return_value_count == 0 {
-                        Ix::Pop {
+                        Instruction::Pop {
                             pop_count: self.runtime_stack_size as u8,
                         }
                     } else {
-                        Ix::Remove {
+                        Instruction::Remove {
                             stack_index: 0,
                             remove_count: (self.runtime_stack_size - return_value_count) as u8,
                         }
@@ -774,8 +808,8 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                     self.push_ix(return_remove_stack_ix)?;
                 }
                 if !IS_ROOT_SCOPE {
-                    self.early_return_indices.push(self.ixs.len());
-                    self.push_ix(Ix::Jump {
+                    self.early_return_indices.push(self.instructions.len());
+                    self.push_ix(Instruction::Jump {
                         relative_offset: i32::MIN,
                     })?;
                 }
@@ -793,7 +827,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                 );
                 let pop_count = (self.runtime_stack_size - new_scope_stack_begin_index) as u8;
                 if pop_count > 0 {
-                    self.push_ix(Ix::Pop { pop_count })?;
+                    self.push_ix(Instruction::Pop { pop_count })?;
                 }
             }
         }
@@ -807,16 +841,16 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
     fn update_break_continue_jump_ixs(&mut self, break_jump_to: i32, continue_jump_to: i32) {
         let loop_context = self.loop_contexts.pop().expect("Loop context must exist");
         for break_index in loop_context.break_indices {
-            match &mut self.ixs[break_index] {
-                Ix::Jump { relative_offset } => {
+            match &mut self.instructions[break_index] {
+                Instruction::Jump { relative_offset } => {
                     *relative_offset = break_jump_to - 1 - break_index as i32;
                 }
                 _ => unreachable!("Break index must be a Jump ix"),
             }
         }
         for continue_index in loop_context.continue_indices {
-            match &mut self.ixs[continue_index] {
-                Ix::Jump { relative_offset } => {
+            match &mut self.instructions[continue_index] {
+                Instruction::Jump { relative_offset } => {
                     *relative_offset = continue_jump_to - 1 - continue_index as i32;
                 }
                 _ => unreachable!("Continue index must be a Jump ix"),
@@ -836,7 +870,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
                 0
             }) as u8;
         if pop_count > 0 {
-            self.push_ix(Ix::Pop { pop_count })?;
+            self.push_ix(Instruction::Pop { pop_count })?;
         }
 
         let loop_context = self.loop_contexts.last_mut().unwrap();
@@ -845,8 +879,8 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         } else {
             &mut loop_context.break_indices
         };
-        indices.push(self.ixs.len());
-        self.push_ix(Ix::Jump {
+        indices.push(self.instructions.len());
+        self.push_ix(Instruction::Jump {
             relative_offset: i32::MIN,
         })?;
         Ok(())
@@ -864,18 +898,18 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         let stack_index = stack_index as u8;
         match place_expr.indexing_exprs.len() {
             0 => {
-                self.push_ix(Ix::Set { stack_index })?;
+                self.push_ix(Instruction::Set { stack_index })?;
             }
             1 => {
                 *left_ending_index -= 1;
-                self.push_ix(Ix::SetListElement {
+                self.push_ix(Instruction::SetListElement {
                     stack_index,
                     base_index: self.list_base_index,
                 })?;
             }
             2.. => {
                 *left_ending_index -= 2;
-                self.push_ix(Ix::SetListElement {
+                self.push_ix(Instruction::SetListElement {
                     stack_index: *left_ending_index as u8,
                     base_index: self.list_base_index,
                 })?;
@@ -897,12 +931,16 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
             }
             ValueExpr::InfixOperator(op, lhs, rhs) => {
                 match op {
-                    Operator::LitAnd => {
-                        self.gen_short_circuit_expr(lhs, rhs, Ix::JumpIfNot { relative_offset: 0 })?
-                    }
-                    Operator::LitOr => {
-                        self.gen_short_circuit_expr(lhs, rhs, Ix::JumpIf { relative_offset: 0 })?
-                    }
+                    Operator::LitAnd => self.gen_short_circuit_expr(
+                        lhs,
+                        rhs,
+                        Instruction::JumpIfNot { relative_offset: 0 },
+                    )?,
+                    Operator::LitOr => self.gen_short_circuit_expr(
+                        lhs,
+                        rhs,
+                        Instruction::JumpIf { relative_offset: 0 },
+                    )?,
                     _ => {
                         self.gen_value_expr(lhs, Some(1))?;
                         self.gen_value_expr(rhs, Some(1))?;
@@ -917,12 +955,12 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
             }
             ValueExpr::Literal(lit) => {
                 let ix = match lit {
-                    LiteralExpr::Number(number) => Ix::PushNumber(*number),
-                    LiteralExpr::Bool(bool) => Ix::PushBool(*bool),
-                    LiteralExpr::Nil => Ix::PushNil { count: 1 },
+                    LiteralExpr::Number(number) => Instruction::PushNumber(*number),
+                    LiteralExpr::Bool(bool) => Instruction::PushBool(*bool),
+                    LiteralExpr::Nil => Instruction::PushNil { count: 1 },
                     LiteralExpr::HashString(s) => {
                         let number = hash_string(s);
-                        Ix::PushNumber(number)
+                        Instruction::PushNumber(number)
                     }
                 };
                 self.push_ix(ix)?;
@@ -930,7 +968,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
             }
             ValueExpr::LiteralList(exprs) => {
                 let element_count = self.gen_value_exprs_keep_last_multiple(exprs)?;
-                self.push_ix(Ix::NewList {
+                self.push_ix(Instruction::NewList {
                     size: element_count as u8,
                 })?;
                 1
@@ -972,17 +1010,17 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
     ) -> Result<usize, LuaminCodegenError> {
         let (func_index, func_def) = self
             .func_lib
-            .get_func_def(ident)
+            .find_by_name(ident)
             .ok_or(LuaminCodegenError::LibFuncNotFound(ident.clone()))?;
         self.used_lib_func_indices.push(func_index);
-        let func_property = func_def.func_pointer.property();
+        let func_property = func_def.func_pointer.signature();
         if func_property.is_mutable && !self.is_mutable_state {
             return Err(LuaminCodegenError::MutableLibFuncInImmutableContext);
         }
 
         let value_count = self.gen_value_exprs_keep_last_multiple(args)?;
         self.gen_adjust_value_count(value_count, func_property.input_count)?;
-        self.push_ix(Ix::CallLib {
+        self.push_ix(Instruction::CallLib {
             fn_index: func_index as u32,
         })?;
         Ok(func_property.output_count)
@@ -1010,11 +1048,11 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         expected_value_count: usize,
     ) -> Result<(), LuaminCodegenError> {
         if value_count > expected_value_count {
-            self.push_ix(Ix::Pop {
+            self.push_ix(Instruction::Pop {
                 pop_count: (value_count - expected_value_count) as u8,
             })?;
         } else if value_count < expected_value_count {
-            self.push_ix(Ix::PushNil {
+            self.push_ix(Instruction::PushNil {
                 count: (expected_value_count - value_count) as u8,
             })?;
         }
@@ -1048,14 +1086,14 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         indexing_exprs: &[ValueExpr],
     ) -> Result<(), LuaminCodegenError> {
         if indexing_exprs.is_empty() {
-            self.push_ix(Ix::Dup {
+            self.push_ix(Instruction::Dup {
                 stack_index: stack_index as u8,
             })?;
         } else {
             let mut stack_index = stack_index as u8;
             for index_expr in indexing_exprs {
                 let _value_count = self.gen_value_expr(index_expr, Some(1))?;
-                self.push_ix(Ix::GetListElement {
+                self.push_ix(Instruction::GetListElement {
                     stack_index,
                     base_index: self.list_base_index,
                 })?;
@@ -1065,7 +1103,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
             let remove_count =
                 (indexing_exprs.len() - if SHOULD_REMOVE_LIST { 0 } else { 1 }) as u8;
             if remove_count > 0 {
-                self.push_ix(Ix::Remove {
+                self.push_ix(Instruction::Remove {
                     stack_index: stack_index - remove_count,
                     remove_count,
                 })?;
@@ -1084,10 +1122,10 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
 
     fn gen_prefix_operator(&mut self, op: Operator) -> Result<(), LuaminCodegenError> {
         let ix = match op {
-            Operator::Minus => Ix::Neg,
-            Operator::Tilde => Ix::BitNot,
-            Operator::LitNot => Ix::LogicalNot,
-            Operator::Hashtag => Ix::Length,
+            Operator::Minus => Instruction::Neg,
+            Operator::Tilde => Instruction::BitNot,
+            Operator::LitNot => Instruction::LogicalNot,
+            Operator::Hashtag => Instruction::Length,
             _ => unreachable!("Invalid prefix operator: {:?}", op),
         };
         self.push_ix(ix)?;
@@ -1098,21 +1136,22 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         &mut self,
         lhs: &ValueExpr,
         rhs: &ValueExpr,
-        jump_ix_template: Ix,
+        jump_ix_template: Instruction,
     ) -> Result<(), LuaminCodegenError> {
         self.gen_value_expr(lhs, Some(1))?;
-        self.push_ix(Ix::Dup {
+        self.push_ix(Instruction::Dup {
             stack_index: (self.runtime_stack_size - 1) as u8,
         })?;
-        let jump_index = self.ixs.len();
+        let jump_index = self.instructions.len();
         self.push_ix(jump_ix_template)?;
 
-        self.push_ix(Ix::Pop { pop_count: 1 })?;
+        self.push_ix(Instruction::Pop { pop_count: 1 })?;
         self.gen_value_expr(rhs, Some(1))?;
 
-        let jump_to = self.ixs.len() as i32;
-        match &mut self.ixs[jump_index] {
-            Ix::JumpIfNot { relative_offset } | Ix::JumpIf { relative_offset } => {
+        let jump_to = self.instructions.len() as i32;
+        match &mut self.instructions[jump_index] {
+            Instruction::JumpIfNot { relative_offset }
+            | Instruction::JumpIf { relative_offset } => {
                 *relative_offset = jump_to - 1 - jump_index as i32;
             }
             _ => unreachable!("Jump index must be a JumpIfNot/JumpIf ix"),
@@ -1123,22 +1162,22 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
 
     fn gen_infix_operator(&mut self, op: Operator) -> Result<(), LuaminCodegenError> {
         let ix = match op {
-            Operator::Plus => Ix::Add,
-            Operator::Minus => Ix::Sub,
-            Operator::Asterisk => Ix::Mul,
-            Operator::DoubleSlash => Ix::DivFloor,
-            Operator::Percent => Ix::Mod,
-            Operator::Lshift => Ix::Lshift,
-            Operator::Rshift => Ix::Rshift,
-            Operator::Ampersand => Ix::BitAnd,
-            Operator::Bar => Ix::BitOr,
-            Operator::Tilde => Ix::BitXor,
-            Operator::Lt => Ix::Lt,
-            Operator::Lte => Ix::Lte,
-            Operator::Gt => Ix::Gt,
-            Operator::Gte => Ix::Gte,
-            Operator::Neq => Ix::Neq,
-            Operator::Eq => Ix::Eq,
+            Operator::Plus => Instruction::Add,
+            Operator::Minus => Instruction::Sub,
+            Operator::Asterisk => Instruction::Mul,
+            Operator::DoubleSlash => Instruction::DivFloor,
+            Operator::Percent => Instruction::Mod,
+            Operator::Lshift => Instruction::Lshift,
+            Operator::Rshift => Instruction::Rshift,
+            Operator::Ampersand => Instruction::BitAnd,
+            Operator::Bar => Instruction::BitOr,
+            Operator::Tilde => Instruction::BitXor,
+            Operator::Lt => Instruction::Lt,
+            Operator::Lte => Instruction::Lte,
+            Operator::Gt => Instruction::Gt,
+            Operator::Gte => Instruction::Gte,
+            Operator::Neq => Instruction::Neq,
+            Operator::Eq => Instruction::Eq,
             Operator::LitAnd | Operator::LitOr => {
                 unreachable!("Should treat short-circuit operators differently: {:?}", op)
             }
@@ -1148,9 +1187,9 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         Ok(())
     }
 
-    fn push_ix(&mut self, ix: Ix) -> Result<(), LuaminCodegenError> {
-        use Ix::*;
-        if self.ixs.len() >= crate::MAX_INSTRUCTIONS {
+    fn push_ix(&mut self, ix: Instruction) -> Result<(), LuaminCodegenError> {
+        use Instruction::*;
+        if self.instructions.len() >= crate::MAX_INSTRUCTIONS {
             return Err(LuaminCodegenError::TooManyInstructions);
         }
 
@@ -1223,9 +1262,9 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
             CallLib { fn_index } => {
                 let func_def = self
                     .func_lib
-                    .kth_func_def(fn_index as usize)
+                    .get(fn_index as usize)
                     .expect("Function index out of bounds");
-                let property = func_def.func_pointer.property();
+                let property = func_def.func_pointer.signature();
                 debug_assert!(
                     self.runtime_stack_size >= property.input_count,
                     "Runtime stack size too small"
@@ -1258,7 +1297,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
             }
         }
 
-        self.ixs.push(ix);
+        self.instructions.push(ix);
 
         Ok(())
     }

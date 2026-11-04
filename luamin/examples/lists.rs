@@ -4,17 +4,17 @@
 use std::convert::Infallible;
 
 use luamin::{
-    FromLuamin, FuncPointerStateLifetimeProvider, HostFuncLibArray, LuaminCompiler, LuaminGas,
-    ToLuamin, luamin_execute,
+    HostFuncLibArray, HostStateProvider, IntoLuamin, LuaminCompiler, LuaminGas, TryFromLuamin,
+    luamin_execute,
 };
 
 struct StateProvider;
-impl FuncPointerStateLifetimeProvider for StateProvider {
+impl HostStateProvider for StateProvider {
     type StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = ();
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let library = HostFuncLibArray::<0, StateProvider, Infallible>::new_const([]);
+    let library = HostFuncLibArray::<0, StateProvider, Infallible>::new([]);
     let mut compiler = LuaminCompiler::new(&library, 1);
     let (script, _) = compiler.compile(
         &[],
@@ -35,19 +35,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "#,
     )?;
 
-    let input = vec![2_i32, 4, 6].to_luamin();
+    let input = vec![2_i32, 4, 6].into_luamin();
     let mut gas = LuaminGas::new(1_000);
     let mut values = luamin_execute(&(), &mut gas, &script, std::slice::from_ref(&input))?;
-    let doubled =
-        Vec::<i32>::from_luamin(values.next().expect("doubled list")).expect("a list of integers");
-    let total = i32::from_luamin(values.next().expect("total")).expect("an integer");
+    let doubled = Vec::<i32>::try_from_luamin(values.next().expect("doubled list"))
+        .expect("a list of integers");
+    let total = i32::try_from_luamin(values.next().expect("total")).expect("an integer");
     assert_eq!(doubled, vec![4, 8, 12]);
     assert_eq!(total, 12);
     assert_eq!(values.next(), None);
 
     // Execution clones list handles, so even a shared-state script can mutate
     // the original list. This is not a deep copy of its elements.
-    let changed_input = Vec::<i32>::from_luamin(input).expect("input list");
+    let changed_input = Vec::<i32>::try_from_luamin(input).expect("input list");
     assert_eq!(changed_input, vec![99, 4, 6]);
     println!("Doubled: {doubled:?}; original sum: {total}");
     println!("Input after script mutation: {changed_input:?}");

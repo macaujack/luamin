@@ -14,7 +14,7 @@ mod luamin_user_value_derive;
 /// 2. Script value type path.
 /// 3. Gas budget type path.
 /// 4. Generic gas error type path.
-/// 5. Function property type path, with `input_count`, `output_count`, and `is_mutable` fields.
+/// 5. Host function signature type path, with `input_count`, `output_count`, and `is_mutable` fields.
 /// 6. Generic call error type path, with `InsufficientLuaminValues` and `IncorrectStateMutability` variants.
 /// 7. Stack operation trait path, with `push_element` and `pop_element` methods.
 /// 8. Generated state lifetime-provider trait name.
@@ -25,7 +25,7 @@ mod luamin_user_value_derive;
 /// For every input/output count below the limits, generates `Fij` and `FijMut`
 /// variants and aliases, where `i` is the input count and `j` the output count.
 /// Functions receive state, gas, and script inputs, and return script outputs
-/// inside `Result<_, GasError<LE>>`. Zero outputs use `()`; one output is a
+/// inside `Result<_, GasError<HostError>>`. Zero outputs use `()`; one output is a
 /// single value, and multiple outputs use a tuple. Generated enum methods expose
 /// signature properties and dispatch calls using shared or exclusive state.
 /// The trait's `StateWithLifetimes` associated type maps the supplied lifetimes
@@ -81,7 +81,7 @@ pub fn luamin_executor_derive(input: proc_macro::TokenStream) -> proc_macro::Tok
 /// # Arguments and results
 ///
 /// Ordinary methods return `Result<T, E>`. Owned arguments are converted with
-/// `FromLuamin`. Reference arguments borrow converted local values; slices
+/// `TryFromLuamin`. Reference arguments borrow converted local values; slices
 /// are converted through a temporary `SmallVec`. Mutating these temporaries
 /// does not write them back into the script argument, though explicitly shared
 /// list handles still alias their original storage. Conversion failures call
@@ -89,7 +89,7 @@ pub fn luamin_executor_derive(input: proc_macro::TokenStream) -> proc_macro::Tok
 ///
 /// A unit success value produces no script outputs, a tuple produces one output
 /// per tuple element, and another supported type produces one output. Outputs
-/// use `ToLuamin`; referenced outputs are cloned, while slices use their slice
+/// use `IntoLuamin`; referenced outputs are cloned, while slices use their slice
 /// conversion. Owned array/path types and references to supported types are
 /// accepted; unsupported type syntax produces a compile error.
 ///
@@ -106,7 +106,7 @@ pub fn luamin_executor_derive(input: proc_macro::TokenStream) -> proc_macro::Tok
 /// # Generated items
 ///
 /// For a state named `State`, emits `StateLifetimeProvider`, implementing
-/// `FuncPointerStateLifetimeProvider`. It carries the state's type and const
+/// `HostStateProvider`. It carries the state's type and const
 /// generics and maps its lifetime parameters through the associated state type.
 /// It provides `new_func_defs()` and `new_func_def_statics()`, returning arrays
 /// in method declaration order. Build a function library from these arrays to

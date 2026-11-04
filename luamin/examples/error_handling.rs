@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let parse_error = compiler
         .compile(&[], "local =")
         .expect_err("invalid syntax");
-    if let LuaminCompileError::LexError(error) = &parse_error {
+    if let LuaminCompileError::ParseError(error) = &parse_error {
         println!(
             "Parsing: {error}; line={}, column={}",
             error.line, error.column
@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The same compiler remains reusable after failed compilations.
     let (script, _) = compiler.compile(&[], "return 1 // 0")?;
     let runtime_error = Host
-        .execute_luamin_script(&mut LuaminGas::new(100), &script, &[])
+        .execute_script(&mut LuaminGas::new(100), &script, &[])
         .expect_err("division by zero");
     assert!(matches!(
         &runtime_error,
@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ] {
         let (script, _) = compiler.compile(&[], source)?;
         let error = Host
-            .execute_luamin_script(&mut LuaminGas::new(100), &script, &[])
+            .execute_script(&mut LuaminGas::new(100), &script, &[])
             .expect_err("host or argument error");
         match &error {
             GasError::Other(LuaminRuntimeError::FuncPointerCallError(

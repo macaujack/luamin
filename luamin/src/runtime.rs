@@ -7,10 +7,8 @@ use smallvec::SmallVec;
 use crate::{
     MAX_RUNTIME_STACK_SIZE,
     codegen::{LuaminScript, LuaminScriptMut},
-    component::Ix,
-    func_lib::{
-        FuncPointerCallError, FuncPointerStateLifetimeProvider, GasError, HostFuncDef, HostFuncLib,
-    },
+    component::Instruction,
+    func_lib::{FuncPointerCallError, GasError, HostFuncDef, HostFuncLib, HostStateProvider},
 };
 
 // MARK: Gas CFG
@@ -195,10 +193,10 @@ impl LuaminGas {
         }
     }
 
-    const fn consume_priv<LE>(
+    const fn consume_priv<HostError>(
         &mut self,
         gas_cost: i32,
-    ) -> Result<(), GasError<LuaminRuntimeError<LE>>> {
+    ) -> Result<(), GasError<LuaminRuntimeError<HostError>>> {
         if self.consume(gas_cost) {
             Err(GasError::GasExceeded)
         } else {
@@ -353,7 +351,7 @@ impl Clone for Box<dyn LuaminUserValue> {
 
 /// Failure during instruction execution, excluding gas exhaustion.
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum LuaminRuntimeError<LE> {
+pub enum LuaminRuntimeError<HostError> {
     /// List length limit exceeded.
     #[error("List length limit exceeded")]
     ListTooLarge,
@@ -368,7 +366,7 @@ pub enum LuaminRuntimeError<LE> {
     InsufficientLuaminValues,
     /// Function call error; the payload contains the underlying error.
     #[error("Function call error: {0}")]
-    FuncPointerCallError(FuncPointerCallError<LE>),
+    FuncPointerCallError(FuncPointerCallError<HostError>),
     /// An instruction references a stack position that does not exist.
     #[error("Stack index out of bound")]
     StackIndexOutOfBound,
@@ -392,8 +390,10 @@ pub enum LuaminRuntimeError<LE> {
     DivisionByZero,
 }
 
-impl<LE> From<GasError<FuncPointerCallError<LE>>> for GasError<LuaminRuntimeError<LE>> {
-    fn from(value: GasError<FuncPointerCallError<LE>>) -> Self {
+impl<HostError> From<GasError<FuncPointerCallError<HostError>>>
+    for GasError<LuaminRuntimeError<HostError>>
+{
+    fn from(value: GasError<FuncPointerCallError<HostError>>) -> Self {
         match value {
             GasError::GasExceeded => GasError::GasExceeded,
             GasError::Other(fp_call_error) => {
@@ -420,28 +420,28 @@ impl<LE> From<GasError<FuncPointerCallError<LE>>> for GasError<LuaminRuntimeErro
 /// Returns [`GasError::GasExceeded`] on exhaustion, or
 /// [`GasError::Other`] for runtime type, borrow, stack, list, arithmetic,
 /// or host errors. Initial stacks above [`MAX_RUNTIME_STACK_SIZE`] are rejected.
-pub fn luamin_execute<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>(
-    state: &SLP::StateWithLifetimes<'_, '_, '_, '_>,
+pub fn luamin_execute<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>(
+    state: &StateProvider::StateWithLifetimes<'_, '_, '_, '_>,
     gas: &mut LuaminGas,
-    luamin_script: &LuaminScript<SLP, LE, X>,
+    luamin_script: &LuaminScript<StateProvider, HostError, Extra>,
     initial_stack: &[LuaminValue],
 ) -> Result<
-    impl ExactSizeIterator<Item = LuaminValue> + std::fmt::Debug + use<SLP, LE, X>,
-    GasError<LuaminRuntimeError<LE>>,
+    impl ExactSizeIterator<Item = LuaminValue> + std::fmt::Debug + use<StateProvider, HostError, Extra>,
+    GasError<LuaminRuntimeError<HostError>>,
 > {
     let mut state = state;
-    let call_fn = move |state: &mut &SLP::StateWithLifetimes<'_, '_, '_, '_>,
+    let call_fn = move |state: &mut &StateProvider::StateWithLifetimes<'_, '_, '_, '_>,
                         gas: &mut LuaminGas,
                         stack: &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
-                        func_def: &HostFuncDef<SLP, LE, X>| {
+                        func_def: &HostFuncDef<StateProvider, HostError, Extra>| {
         func_def.func_pointer.call(state, gas, stack)
     };
 
     execute_aux(
         &mut state,
         gas,
-        luamin_script.func_lib(),
-        luamin_script.ixs(),
+        luamin_script.host_func_lib(),
+        luamin_script.instructions(),
         initial_stack,
         call_fn,
     )
@@ -452,53 +452,53 @@ pub fn luamin_execute<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'st
 /// Accepts both shared and mutable host methods. Parameter ordering, returned
 /// values, aliasing, gas accounting, and errors follow [`luamin_execute`].
 /// Host state and shared list changes made before an error are retained.
-pub fn luamin_execute_mut<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>(
-    state: &mut SLP::StateWithLifetimes<'_, '_, '_, '_>,
+pub fn luamin_execute_mut<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>(
+    state: &mut StateProvider::StateWithLifetimes<'_, '_, '_, '_>,
     gas: &mut LuaminGas,
-    luamin_script_mut: &LuaminScriptMut<SLP, LE, X>,
+    luamin_script_mut: &LuaminScriptMut<StateProvider, HostError, Extra>,
     initial_stack: &[LuaminValue],
 ) -> Result<
-    impl ExactSizeIterator<Item = LuaminValue> + std::fmt::Debug + use<SLP, LE, X>,
-    GasError<LuaminRuntimeError<LE>>,
+    impl ExactSizeIterator<Item = LuaminValue> + std::fmt::Debug + use<StateProvider, HostError, Extra>,
+    GasError<LuaminRuntimeError<HostError>>,
 > {
     let mut state = state;
-    let call_fn = |state: &mut &mut SLP::StateWithLifetimes<'_, '_, '_, '_>,
+    let call_fn = |state: &mut &mut StateProvider::StateWithLifetimes<'_, '_, '_, '_>,
                    gas: &mut LuaminGas,
                    stack: &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
-                   func_def: &HostFuncDef<SLP, LE, X>| {
+                   func_def: &HostFuncDef<StateProvider, HostError, Extra>| {
         func_def.func_pointer.call_mut(state, gas, stack)
     };
 
     execute_aux(
         &mut state,
         gas,
-        luamin_script_mut.func_lib(),
-        luamin_script_mut.ixs(),
+        luamin_script_mut.host_func_lib(),
+        luamin_script_mut.instructions(),
         initial_stack,
         call_fn,
     )
 }
 
-fn execute_aux<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static, RS, F>(
+fn execute_aux<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static, RS, F>(
     state: &mut RS,
     gas: &mut LuaminGas,
-    func_lib: &HostFuncLib<SLP, LE, X>,
-    ixs: &[Ix],
+    func_lib: &HostFuncLib<StateProvider, HostError, Extra>,
+    instructions: &[Instruction],
     initial_stack: &[LuaminValue],
     mut call_fn: F,
 ) -> Result<
     <SmallVec<[LuaminValue; LIKELY_STACK_CAP]> as IntoIterator>::IntoIter,
-    GasError<LuaminRuntimeError<LE>>,
+    GasError<LuaminRuntimeError<HostError>>,
 >
 where
     F: FnMut(
         &mut RS,
         &mut LuaminGas,
         &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
-        &HostFuncDef<SLP, LE, X>,
-    ) -> Result<(), GasError<FuncPointerCallError<LE>>>,
+        &HostFuncDef<StateProvider, HostError, Extra>,
+    ) -> Result<(), GasError<FuncPointerCallError<HostError>>>,
 {
-    use Ix::*;
+    use Instruction::*;
 
     if initial_stack.len() > MAX_RUNTIME_STACK_SIZE {
         return Err(GasError::Other(LuaminRuntimeError::StackOverflow));
@@ -514,8 +514,8 @@ where
         };
     }
 
-    while (pc as usize) < ixs.len() {
-        let ix = &ixs[pc as usize];
+    while (pc as usize) < instructions.len() {
+        let ix = &instructions[pc as usize];
         match ix {
             PushNumber(number) => {
                 gas.consume_priv(GAS_COST_BASIC_SCALAR)?;
@@ -542,9 +542,9 @@ where
             }
             CallLib { fn_index } => {
                 let func_def = func_lib
-                    .kth_func_def(*fn_index as usize)
+                    .get(*fn_index as usize)
                     .expect("Function index out of bounds");
-                let property = func_def.func_pointer.property();
+                let property = func_def.func_pointer.signature();
                 assert_or_ret!(
                     stack.len() >= property.input_count,
                     InsufficientLuaminValues
@@ -815,9 +815,9 @@ where
     Ok(stack.into_iter())
 }
 
-fn pop_number_2<LE>(
+fn pop_number_2<HostError>(
     stack: &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
-) -> Result<(i32, i32), GasError<LuaminRuntimeError<LE>>> {
+) -> Result<(i32, i32), GasError<LuaminRuntimeError<HostError>>> {
     if stack.len() < 2 {
         return Err(GasError::Other(
             LuaminRuntimeError::InsufficientLuaminValues,
@@ -834,9 +834,9 @@ fn pop_number_2<LE>(
     Ok((a, b))
 }
 
-fn pop_number_1<LE>(
+fn pop_number_1<HostError>(
     stack: &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
-) -> Result<i32, GasError<LuaminRuntimeError<LE>>> {
+) -> Result<i32, GasError<LuaminRuntimeError<HostError>>> {
     if stack.is_empty() {
         return Err(GasError::Other(
             LuaminRuntimeError::InsufficientLuaminValues,
@@ -849,7 +849,7 @@ fn pop_number_1<LE>(
     Ok(a)
 }
 
-fn div_floor<LE>(a: i32, b: i32) -> Result<i32, GasError<LuaminRuntimeError<LE>>> {
+fn div_floor<HostError>(a: i32, b: i32) -> Result<i32, GasError<LuaminRuntimeError<HostError>>> {
     if b == 0 {
         return Err(GasError::Other(LuaminRuntimeError::DivisionByZero));
     }
@@ -862,28 +862,28 @@ fn div_floor<LE>(a: i32, b: i32) -> Result<i32, GasError<LuaminRuntimeError<LE>>
     }
 }
 
-fn execute_arith_2<LE>(
+fn execute_arith_2<HostError>(
     stack: &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
     op: fn(i32, i32) -> i32,
-) -> Result<(), GasError<LuaminRuntimeError<LE>>> {
+) -> Result<(), GasError<LuaminRuntimeError<HostError>>> {
     let (a, b) = pop_number_2(stack)?;
     stack.push_element_checked(LuaminValue::Number(op(a, b)))?;
     Ok(())
 }
 
-fn execute_arith_1<LE>(
+fn execute_arith_1<HostError>(
     stack: &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
     op: fn(i32) -> i32,
-) -> Result<(), GasError<LuaminRuntimeError<LE>>> {
+) -> Result<(), GasError<LuaminRuntimeError<HostError>>> {
     let a = pop_number_1(stack)?;
     stack.push_element_checked(LuaminValue::Number(op(a)))?;
     Ok(())
 }
 
-fn compare_2<LE>(
+fn compare_2<HostError>(
     stack: &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
     op: fn(i32, i32) -> bool,
-) -> Result<(), GasError<LuaminRuntimeError<LE>>> {
+) -> Result<(), GasError<LuaminRuntimeError<HostError>>> {
     let (a, b) = pop_number_2(stack)?;
     stack.push_element_checked(LuaminValue::Bool(op(a, b)))?;
     Ok(())
@@ -898,17 +898,17 @@ fn cast_bool(element: &LuaminValue) -> bool {
 }
 
 trait StackOp {
-    fn push_element_checked<LE>(
+    fn push_element_checked<HostError>(
         &mut self,
         element: LuaminValue,
-    ) -> Result<(), GasError<LuaminRuntimeError<LE>>>;
+    ) -> Result<(), GasError<LuaminRuntimeError<HostError>>>;
 }
 
 impl StackOp for SmallVec<[LuaminValue; LIKELY_STACK_CAP]> {
-    fn push_element_checked<LE>(
+    fn push_element_checked<HostError>(
         &mut self,
         element: LuaminValue,
-    ) -> Result<(), GasError<LuaminRuntimeError<LE>>> {
+    ) -> Result<(), GasError<LuaminRuntimeError<HostError>>> {
         if self.len() + 1 > MAX_RUNTIME_STACK_SIZE {
             Err(GasError::Other(LuaminRuntimeError::StackOverflow))
         } else {

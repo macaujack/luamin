@@ -110,18 +110,18 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 let fn_pointer_type = if is_mutable {
                     quote! {
                         for<'a, #(#lifetime_generic_names),*> fn(
-                            &'a mut <SLP as #lifetime_provider_trait_name>::StateWithLifetimes<#(#lifetime_generic_names),*>,
+                            &'a mut <StateProvider as #lifetime_provider_trait_name>::StateWithLifetimes<#(#lifetime_generic_names),*>,
                             gas: &'a mut #gas_type_path,
                             #(#input),*
-                        ) -> ::core::result::Result<(#(#output),*), #gas_error_type_path<LE>>
+                        ) -> ::core::result::Result<(#(#output),*), #gas_error_type_path<HostError>>
                     }
                 } else {
                     quote! {
                         for<'a, #(#lifetime_generic_names),*> fn(
-                            &'a <SLP as #lifetime_provider_trait_name>::StateWithLifetimes<#(#lifetime_generic_names),*>,
+                            &'a <StateProvider as #lifetime_provider_trait_name>::StateWithLifetimes<#(#lifetime_generic_names),*>,
                             gas: &'a mut #gas_type_path,
                             #(#input),*
-                        ) -> ::core::result::Result<(#(#output),*), #gas_error_type_path<LE>>
+                        ) -> ::core::result::Result<(#(#output),*), #gas_error_type_path<HostError>>
                     }
                 };
 
@@ -131,11 +131,11 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 );
                 enum_variants.push(quote! {
                     #[doc = #signature_doc]
-                    #variant_name(#variant_name<SLP, LE>)
+                    #variant_name(#variant_name<StateProvider, HostError>)
                 });
                 type_aliases.push(quote! {
                     #[doc = #signature_doc]
-                    pub type #variant_name<SLP, LE> = #fn_pointer_type;
+                    pub type #variant_name<StateProvider, HostError> = #fn_pointer_type;
                 });
                 impl_clone_arms.push(quote! {
                     #enum_name::#variant_name(fn_pointer) => #enum_name::#variant_name(*fn_pointer)
@@ -197,7 +197,7 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
     quote! {
         /// Maps execution lifetimes to the application's host state type.
         ///
-        /// `SLP` in the surrounding API refers to an implementor of this trait.
+        /// `StateProvider` in the surrounding API refers to an implementor of this trait.
         /// Host binding macros generate a provider for each annotated state impl.
         pub trait #lifetime_provider_trait_name {
             /// Host state with the supplied execution lifetimes substituted into its type.
@@ -208,14 +208,14 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
 
         /// Typed dispatch pointer for a host function.
         ///
-        /// `SLP` supplies the state type and `LE` is the application error type.
+        /// `StateProvider` supplies the state type and `HostError` is the application error type.
         /// Variants encode script input count, output count, and state mutability;
-        /// `property` exposes those counts without invoking the function.
-        pub enum #enum_name<SLP: #lifetime_provider_trait_name, LE: 'static> {
+        /// `signature` exposes those counts without invoking the function.
+        pub enum #enum_name<StateProvider: #lifetime_provider_trait_name, HostError: 'static> {
             #(#enum_variants),*
         }
 
-        impl<SLP: #lifetime_provider_trait_name, LE: 'static> Clone for #enum_name<SLP, LE> {
+        impl<StateProvider: #lifetime_provider_trait_name, HostError: 'static> Clone for #enum_name<StateProvider, HostError> {
             fn clone(&self) -> Self {
                 match self {
                     #(#impl_clone_arms),*
@@ -223,9 +223,9 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
             }
         }
 
-        impl<SLP: #lifetime_provider_trait_name, LE: 'static> Copy for #enum_name<SLP, LE> {}
+        impl<StateProvider: #lifetime_provider_trait_name, HostError: 'static> Copy for #enum_name<StateProvider, HostError> {}
 
-        impl<SLP: #lifetime_provider_trait_name, LE: 'static> ::std::fmt::Debug for #enum_name<SLP, LE> {
+        impl<StateProvider: #lifetime_provider_trait_name, HostError: 'static> ::std::fmt::Debug for #enum_name<StateProvider, HostError> {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                 match self {
                     #(#impl_debug_arms),*
@@ -233,9 +233,9 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
             }
         }
 
-        impl<SLP: #lifetime_provider_trait_name, LE: 'static> #enum_name<SLP, LE> {
+        impl<StateProvider: #lifetime_provider_trait_name, HostError: 'static> #enum_name<StateProvider, HostError> {
             /// Returns input/output counts and the required host state mutability.
-            pub fn property(&self) -> #func_pointer_property_type_path {
+            pub fn signature(&self) -> #func_pointer_property_type_path {
                 match self {
                     #(#impl_property_arms),*
                 }
@@ -250,12 +250,12 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
             /// the runtime and host wrapper are responsible for their respective charges.
             pub fn call<'a, #(#lifetime_generic_names),* , STK>(
                 &'a self,
-                state: &'a SLP::StateWithLifetimes<#(#lifetime_generic_names),*>,
+                state: &'a StateProvider::StateWithLifetimes<#(#lifetime_generic_names),*>,
                 gas: &'a mut #gas_type_path,
                 stack: &'a mut STK,
-            ) -> ::core::result::Result<(), #gas_error_type_path<#func_pointer_call_error_type_path<LE>>>
+            ) -> ::core::result::Result<(), #gas_error_type_path<#func_pointer_call_error_type_path<HostError>>>
             where
-                STK: #func_pointer_call_stack_op_trait_path<LE>,
+                STK: #func_pointer_call_stack_op_trait_path<HostError>,
             {
                 match self {
                     #(#impl_call_ro_arms),*
@@ -271,12 +271,12 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
             /// wrapper are responsible for charging gas.
             pub fn call_mut<'a, #(#lifetime_generic_names),* , STK>(
                 &'a self,
-                state: &'a mut SLP::StateWithLifetimes<#(#lifetime_generic_names),*>,
+                state: &'a mut StateProvider::StateWithLifetimes<#(#lifetime_generic_names),*>,
                 gas: &'a mut #gas_type_path,
                 stack: &'a mut STK,
-            ) -> ::core::result::Result<(), #gas_error_type_path<#func_pointer_call_error_type_path<LE>>>
+            ) -> ::core::result::Result<(), #gas_error_type_path<#func_pointer_call_error_type_path<HostError>>>
             where
-                STK: #func_pointer_call_stack_op_trait_path<LE>,
+                STK: #func_pointer_call_stack_op_trait_path<HostError>,
             {
                 match self {
                     #(#impl_call_mut_arms),*

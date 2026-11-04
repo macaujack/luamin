@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The generated lifetime provider maps execution lifetimes to Measurements<'a>.
     // The compiled script borrows its library, not this particular state instance.
     let values: Vec<_> = state
-        .execute_luamin_script(&mut LuaminGas::new(1_000), &script, &[])?
+        .execute_script(&mut LuaminGas::new(1_000), &script, &[])?
         .collect();
     assert_eq!(values, vec![LuaminValue::Number(54)]);
     println!("Borrowed readings: {readings:?}; script total: {values:?}");

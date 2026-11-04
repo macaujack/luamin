@@ -259,7 +259,7 @@ pub fn luamin_bindgen(
 
         #lp_struct_def
 
-        impl #lp_impl_generics #runtime::func_lib::FuncPointerStateLifetimeProvider for #lp_struct_ident #lp_type_generics
+        impl #lp_impl_generics #runtime::func_lib::HostStateProvider for #lp_struct_ident #lp_type_generics
         #lp_where_clause
         {
             type StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = #impl_self_ty_for_lp;
@@ -501,8 +501,8 @@ fn handle_impl_fn(
         .map(|i| format_ident!("output{i}"))
         .collect();
     let converted: Vec<_> = output_names.iter().zip(cloned).map(|(name, clone)| {
-        if clone { quote! { #runtime::convert::ToLuamin::to_luamin(::core::clone::Clone::clone(&*#name)) } }
-        else { quote! { #runtime::convert::ToLuamin::to_luamin(#name) } }
+        if clone { quote! { #runtime::convert::IntoLuamin::into_luamin(::core::clone::Clone::clone(&*#name)) } }
+        else { quote! { #runtime::convert::IntoLuamin::into_luamin(#name) } }
     }).collect();
     let output_value_types = vec![quote! { #runtime::runtime::LuaminValue }; output_count];
     let call = if manual_gas {
@@ -559,7 +559,7 @@ fn handle_impl_fn(
         },
         luamin_func_item: quote! {
             #(#cfg)* fn #wrapper<'r0, 'r1, 'r2, 'r3>(
-                state: & #mutability <Self as #runtime::func_lib::FuncPointerStateLifetimeProvider>::StateWithLifetimes<'r0, 'r1, 'r2, 'r3>,
+                state: & #mutability <Self as #runtime::func_lib::HostStateProvider>::StateWithLifetimes<'r0, 'r1, 'r2, 'r3>,
                 gas: &mut #runtime::runtime::LuaminGas,
                 #(#input_names: #runtime::runtime::LuaminValue),*
             ) -> ::core::result::Result<(#(#output_value_types),*), #runtime::func_lib::GasError<#error_type>> {
@@ -630,7 +630,7 @@ fn input_conversion(
     };
     Ok((
         quote! {
-            let #mutable #ident = <#conversion_ty as #runtime::convert::FromLuamin>::from_luamin(#ident)
+            let #mutable #ident = <#conversion_ty as #runtime::convert::TryFromLuamin>::try_from_luamin(#ident)
                 .ok_or_else(|| #runtime::func_lib::GasError::Other(#error_fn(#function, #index)))?;
         },
         call,

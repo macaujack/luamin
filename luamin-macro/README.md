@@ -49,7 +49,7 @@ For `Host`, the macro generates `HostLifetimeProvider`, including:
 - Private conversion wrappers for the registered methods.
 
 The arrays follow method declaration order. Pass them to `HostFuncLibBuf::new`
-or `HostFuncLibArray::new_const` to create the sorted library used by the compiler.
+or `HostFuncLibArray::new` to create the sorted library used by the compiler.
 The original methods remain callable from Rust.
 
 See the [luamin crate guide](https://docs.rs/luamin) for a complete executable

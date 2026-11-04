@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut gas = LuaminGas::new(100);
     // Supply amount = 7 on the initial stack and collect the script's return values.
     let values: Vec<_> = state
-        .execute_luamin_script_mut(&mut gas, &script, &[LuaminValue::Number(7)])?
+        .execute_script_mut(&mut gas, &script, &[LuaminValue::Number(7)])?
         .collect();
 
     // The host method updates the state and returns the new score to the script.
@@ -134,7 +134,7 @@ names. The compiled script borrows this library and can be executed again with
 another compatible state or input values.
 
 `compile_mut` allows host functions taking `&mut self`. Use `compile` and
-`execute_luamin_script` when only shared host access is needed.
+`execute_script` when only shared host access is needed.
 
 ## Values and parameters
 
@@ -144,8 +144,9 @@ another compatible state or input values.
   passed to `compile` or `compile_mut` precede source-declared parameters.
   Missing values become nil; excess values are discarded, subject to the initial
   stack size limit.
-- `ToLuamin` and `FromLuamin` convert supported Rust values, options, and
-  collections. A failed conversion returns `None`.
+- `IntoLuamin` and `TryFromLuamin` convert supported Rust values, options, and
+  collections. `IntoLuamin` consumes its receiver; `TryFromLuamin` returns `None`
+  when a conversion fails.
 - `#index` overrides the compiler's default list base index. `ipairs` iteration
   stops at the first nil element.
 - Lists compare by identity and share storage when cloned. Parameter bindings

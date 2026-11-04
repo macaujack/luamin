@@ -12,14 +12,14 @@ pub mod component;
 pub mod convert;
 /// Host function definitions, libraries, and gas-aware dispatch.
 pub mod func_lib;
-/// Source parsing and structured syntax diagnostics.
-pub mod lexer;
 mod limits;
+/// Source parsing and structured syntax diagnostics.
+pub mod parser;
 pub use limits::{MAX_INSTRUCTIONS, MAX_SOURCE_BYTES, MAX_SYNTAX_DEPTH, MAX_SYNTAX_NODES};
 /// Script values, execution, gas accounting, and runtime errors.
 pub mod runtime;
 
-pub use convert::{FromLuamin, ToLuamin};
+pub use convert::{IntoLuamin, TryFromLuamin};
 pub use func_lib::{
     DuplicateFunctionError, HostFuncDef, HostFuncDefStatic, HostFuncLibArray, HostFuncLibBuf,
 };
@@ -32,8 +32,8 @@ use xxhash_rust::{const_xxh3, xxh3};
 
 pub use crate::{
     codegen::{LuaminCodegen, LuaminCodegenError, LuaminScript, LuaminScriptMut},
-    func_lib::{FuncPointerStateLifetimeProvider, GasError, HostFuncLib},
-    lexer::{LexError, LexErrorKind, luamin_lex},
+    func_lib::{GasError, HostFuncLib, HostStateProvider},
+    parser::{ParseError, ParseErrorKind, luamin_parse},
     runtime::{
         LuaminGas, LuaminRuntimeError, LuaminUserValue, LuaminValue, luamin_execute,
         luamin_execute_mut,
@@ -45,33 +45,41 @@ pub const MAX_RUNTIME_STACK_SIZE: usize = 255;
 
 /// Reusable compiler that parses source and generates scripts bound to a host library.
 ///
-/// `SLP` supplies the host state type and its lifetimes, `LE` is the host error
-/// type, and `X` is application metadata attached to each host function.
+/// `StateProvider` supplies the host state type and its lifetimes, `HostError` is the host error
+/// type, and `Extra` is application metadata attached to each host function.
 /// Compiled scripts borrow the library for `'f`; they do not borrow the compiler.
 #[derive(Debug, Clone)]
-pub struct LuaminCompiler<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
-    codegen: LuaminCodegen<'f, SLP, LE, X>,
+pub struct LuaminCompiler<
+    'f,
+    StateProvider: HostStateProvider,
+    HostError: 'static,
+    Extra: 'static = (),
+> {
+    codegen: LuaminCodegen<'f, StateProvider, HostError, Extra>,
 }
 
 /// Failure while parsing source or generating executable instructions.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum LuaminCompileError {
     /// Source syntax or parsing resource-limit error.
-    #[error("Lex error: {0}")]
-    LexError(#[from] LexError),
+    #[error("Parse error: {0}")]
+    ParseError(#[from] ParseError),
     /// Semantic validation or instruction-generation error.
     #[error("Codegen error: {0}")]
     CodegenError(#[from] LuaminCodegenError),
 }
 
-impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
-    LuaminCompiler<'f, SLP, LE, X>
+impl<'f, StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>
+    LuaminCompiler<'f, StateProvider, HostError, Extra>
 {
     /// Creates a compiler using `func_lib` for host function resolution.
     ///
     /// `default_list_base_index` is the script index corresponding to the first
     /// list element, unless overridden by the source list-base directive.
-    pub fn new(func_lib: &'f HostFuncLib<SLP, LE, X>, default_list_base_index: i8) -> Self {
+    pub fn new(
+        func_lib: &'f HostFuncLib<StateProvider, HostError, Extra>,
+        default_list_base_index: i8,
+    ) -> Self {
         Self {
             codegen: LuaminCodegen::new(func_lib, default_list_base_index),
         }
@@ -97,8 +105,14 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         &mut self,
         intrinsic_param_idents: &[SmolStr],
         input: &str,
-    ) -> Result<(LuaminScript<'f, SLP, LE, X>, Vec<usize>), LuaminCompileError> {
-        let (directive, stmts) = luamin_lex(input)?;
+    ) -> Result<
+        (
+            LuaminScript<'f, StateProvider, HostError, Extra>,
+            Vec<usize>,
+        ),
+        LuaminCompileError,
+    > {
+        let (directive, stmts) = luamin_parse(input)?;
         self.codegen
             .codegen(intrinsic_param_idents, &directive, &stmts)
             .map_err(|e| e.into())
@@ -118,8 +132,14 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         &mut self,
         intrinsic_param_idents: &[SmolStr],
         input: &str,
-    ) -> Result<(LuaminScriptMut<'f, SLP, LE, X>, Vec<usize>), LuaminCompileError> {
-        let (directive, stmts) = luamin_lex(input)?;
+    ) -> Result<
+        (
+            LuaminScriptMut<'f, StateProvider, HostError, Extra>,
+            Vec<usize>,
+        ),
+        LuaminCompileError,
+    > {
+        let (directive, stmts) = luamin_parse(input)?;
         self.codegen
             .codegen_mut(intrinsic_param_idents, &directive, &stmts)
             .map_err(|e| e.into())
@@ -129,7 +149,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
 /// Convenience execution methods for a host state type.
 ///
 /// The `LuaminExecutor` derive implements this trait using its default methods.
-/// `SLP` must resolve to `Self` for the selected state lifetimes; `LE` and `X`
+/// `StateProvider` must resolve to `Self` for the selected state lifetimes; `HostError` and `Extra`
 /// are the library error and per-function metadata types.
 pub trait LuaminExecutor
 where
@@ -139,19 +159,21 @@ where
     ///
     /// See [`luamin_execute`] for initial-stack ordering, return values, gas
     /// accounting, and errors. Shared access does not prevent interior mutation.
-    fn execute_luamin_script<'f, 'a, 'r0, 'r1, 'r2, 'r3, SLP, LE, X>(
+    fn execute_script<'f, 'a, 'r0, 'r1, 'r2, 'r3, StateProvider, HostError, Extra>(
         &'a self,
         gas: &'a mut LuaminGas,
-        luamin_script: &'a LuaminScript<'f, SLP, LE, X>,
+        luamin_script: &'a LuaminScript<'f, StateProvider, HostError, Extra>,
         initial_stack: &'a [LuaminValue],
     ) -> Result<
-        impl ExactSizeIterator<Item = LuaminValue> + std::fmt::Debug + use<Self, SLP, LE, X>,
-        GasError<LuaminRuntimeError<LE>>,
+        impl ExactSizeIterator<Item = LuaminValue>
+        + std::fmt::Debug
+        + use<Self, StateProvider, HostError, Extra>,
+        GasError<LuaminRuntimeError<HostError>>,
     >
     where
-        SLP: FuncPointerStateLifetimeProvider<StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = Self>,
-        LE: 'static,
-        X: 'static,
+        StateProvider: HostStateProvider<StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = Self>,
+        HostError: 'static,
+        Extra: 'static,
     {
         luamin_execute(self, gas, luamin_script, initial_stack)
     }
@@ -160,19 +182,21 @@ where
     ///
     /// See [`luamin_execute_mut`] for execution behavior and errors. Changes
     /// made before an error are retained.
-    fn execute_luamin_script_mut<'f, 'a, 'r0, 'r1, 'r2, 'r3, SLP, LE, X>(
+    fn execute_script_mut<'f, 'a, 'r0, 'r1, 'r2, 'r3, StateProvider, HostError, Extra>(
         &mut self,
         gas: &'a mut LuaminGas,
-        luamin_script_mut: &LuaminScriptMut<'f, SLP, LE, X>,
+        luamin_script_mut: &LuaminScriptMut<'f, StateProvider, HostError, Extra>,
         initial_stack: &[LuaminValue],
     ) -> Result<
-        impl ExactSizeIterator<Item = LuaminValue> + std::fmt::Debug + use<Self, SLP, LE, X>,
-        GasError<LuaminRuntimeError<LE>>,
+        impl ExactSizeIterator<Item = LuaminValue>
+        + std::fmt::Debug
+        + use<Self, StateProvider, HostError, Extra>,
+        GasError<LuaminRuntimeError<HostError>>,
     >
     where
-        SLP: FuncPointerStateLifetimeProvider<StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = Self>,
-        LE: 'static,
-        X: 'static,
+        StateProvider: HostStateProvider<StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = Self>,
+        HostError: 'static,
+        Extra: 'static,
     {
         luamin_execute_mut(self, gas, luamin_script_mut, initial_stack)
     }

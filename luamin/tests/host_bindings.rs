@@ -138,7 +138,7 @@ fn new_incorrect_type_error(func_name: &'static str, arg_index: usize) -> StateE
 
 fn get_compiler() -> LuaminCompiler<'static, StateLifetimeProvider<()>, StateError, FuncDefExtra> {
     static FUNC_LIB: &HostFuncLib<StateLifetimeProvider<()>, StateError, FuncDefExtra> =
-        &HostFuncLibArray::new_const(StateLifetimeProvider::<()>::new_func_def_statics());
+        &HostFuncLibArray::new(StateLifetimeProvider::<()>::new_func_def_statics());
 
     LuaminCompiler::new(FUNC_LIB, 1)
 }
@@ -146,7 +146,7 @@ fn get_compiler() -> LuaminCompiler<'static, StateLifetimeProvider<()>, StateErr
 #[test]
 fn test_func_lib() {
     let func_lib = HostFuncLibBuf::new(StateLifetimeProvider::<()>::new_func_defs()).unwrap();
-    let (_, func_def) = func_lib.get_func_def("add_score").unwrap();
+    let (_, func_def) = func_lib.find_by_name("add_score").unwrap();
     assert_eq!(func_def.extra.precedence, 200);
 }
 
@@ -164,7 +164,7 @@ fn test_compile_and_execute() {
     let state = State::default();
     let mut gas = LuaminGas::MAX;
     let mut return_values = state
-        .execute_luamin_script(
+        .execute_script(
             &mut gas,
             &luamin_script,
             &[LuaminValue::Number(3), LuaminValue::Number(4)],
@@ -188,7 +188,7 @@ fn test_array_conversion() {
     let mut state = State::default();
     let mut gas = LuaminGas::MAX;
     let return_values = state
-        .execute_luamin_script_mut(
+        .execute_script_mut(
             &mut gas,
             &luamin_script,
             &[LuaminValue::Number(600), LuaminValue::Number(66)],
@@ -215,9 +215,7 @@ fn test_raw_list_conversion() {
         .unwrap();
     let state = State::default();
     let mut gas = LuaminGas::MAX;
-    let return_values = state
-        .execute_luamin_script(&mut gas, &luamin_script, &[])
-        .unwrap();
+    let return_values = state.execute_script(&mut gas, &luamin_script, &[]).unwrap();
     assert_eq!(return_values.len(), 1);
     let returned_list = match return_values.into_iter().next().unwrap() {
         LuaminValue::List(list) => list,
@@ -247,14 +245,12 @@ fn test_gas_exceeded() {
     let state = State::default();
 
     let mut gas = LuaminGas::MAX;
-    let return_values = state
-        .execute_luamin_script(&mut gas, &luamin_script, &[])
-        .unwrap();
+    let return_values = state.execute_script(&mut gas, &luamin_script, &[]).unwrap();
     assert_eq!(return_values.len(), 0);
 
     let mut gas = LuaminGas::new(4);
     let err = state
-        .execute_luamin_script(&mut gas, &luamin_script, &[])
+        .execute_script(&mut gas, &luamin_script, &[])
         .unwrap_err();
     assert_matches!(err, GasError::GasExceeded);
 }

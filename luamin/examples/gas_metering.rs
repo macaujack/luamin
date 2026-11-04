@@ -53,9 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut compiler = LuaminCompiler::new(&library, 1);
     let (script, _) = compiler.compile(&[], "return double(4), sum_to(5)")?;
     let mut gas = LuaminGas::new(100);
-    let values: Vec<_> = Host
-        .execute_luamin_script(&mut gas, &script, &[])?
-        .collect();
+    let values: Vec<_> = Host.execute_script(&mut gas, &script, &[])?.collect();
     assert_eq!(
         values,
         vec![LuaminValue::Number(8), LuaminValue::Number(15)]
@@ -73,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (loop_script, _) = compiler.compile(&[], "while true do end")?;
     let mut loop_gas = LuaminGas::new(20);
     let error = Host
-        .execute_luamin_script(&mut loop_gas, &loop_script, &[])
+        .execute_script(&mut loop_gas, &loop_script, &[])
         .expect_err("an unbounded loop must exhaust its finite budget");
     assert!(matches!(error, GasError::GasExceeded));
     assert!(loop_gas.has_exceeded());

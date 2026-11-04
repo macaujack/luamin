@@ -4,18 +4,18 @@
 use std::convert::Infallible;
 
 use luamin::{
-    FuncPointerStateLifetimeProvider, HostFuncLibArray, LuaminCompiler, LuaminGas, LuaminValue,
-    ToLuamin, luamin_execute,
+    HostFuncLibArray, HostStateProvider, IntoLuamin, LuaminCompiler, LuaminGas, LuaminValue,
+    luamin_execute,
 };
 
 // No host functions are needed, so the execution state is simply ().
 struct StateProvider;
-impl FuncPointerStateLifetimeProvider for StateProvider {
+impl HostStateProvider for StateProvider {
     type StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = ();
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let library = HostFuncLibArray::<0, StateProvider, Infallible>::new_const([]);
+    let library = HostFuncLibArray::<0, StateProvider, Infallible>::new([]);
     let mut compiler = LuaminCompiler::new(&library, 1);
     let (script, used_functions) = compiler.compile(
         &[],
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (a, b) in [(3_i32, 4_i32), (10, 2)] {
         let mut gas = LuaminGas::new(100);
         let values: Vec<_> =
-            luamin_execute(&(), &mut gas, &script, &[a.to_luamin(), b.to_luamin()])?.collect();
+            luamin_execute(&(), &mut gas, &script, &[a.into_luamin(), b.into_luamin()])?.collect();
         assert_eq!(
             values,
             vec![LuaminValue::Number(a + b), LuaminValue::Number(a * b)]

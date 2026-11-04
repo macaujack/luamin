@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (read_script, _) = compiler.compile(&[], "return score()")?;
     let values: Vec<_> = counter
-        .execute_luamin_script(&mut LuaminGas::new(100), &read_script, &[])?
+        .execute_script(&mut LuaminGas::new(100), &read_script, &[])?
         .collect();
     assert_eq!(values, vec![LuaminValue::Number(10)]);
     println!("Before update: {values:?}");
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "#,
     )?;
     let values: Vec<_> = counter
-        .execute_luamin_script_mut(&mut LuaminGas::new(100), &update_script, &[])?
+        .execute_script_mut(&mut LuaminGas::new(100), &update_script, &[])?
         .collect();
     assert_eq!(counter.score, 17);
     assert_eq!(values, vec![LuaminValue::Number(17)]);

@@ -202,7 +202,7 @@ fn renamed_dependency_macros_execute() {
         .unwrap();
     let mut host = Host::default();
     let values: Vec<_> = host
-        .execute_luamin_script_mut(&mut LuaminGas::new(100), &script, &[])
+        .execute_script_mut(&mut LuaminGas::new(100), &script, &[])
         .unwrap()
         .collect();
     assert_eq!(values, vec![LuaminValue::Number(4), LuaminValue::Number(4)]);

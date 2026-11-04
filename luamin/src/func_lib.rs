@@ -16,31 +16,34 @@ mod private {
 
 /// Fixed-size, name-sorted host function library suitable for constant construction.
 ///
-/// `N` is the number of definitions, `SLP` supplies host state lifetimes,
-/// `LE` is the host error type, and `X` is per-function metadata.
+/// `N` is the number of definitions, `StateProvider` supplies host state lifetimes,
+/// `HostError` is the host error type, and `Extra` is per-function metadata.
 /// Coerces to [`HostFuncLib`] for compilation and execution.
-pub type HostFuncLibArray<const N: usize, SLP, LE, X = ()> =
-    private::HostFuncLibHelper<[HostFuncDef<SLP, LE, X>; N]>;
+pub type HostFuncLibArray<const N: usize, StateProvider, HostError, Extra = ()> =
+    private::HostFuncLibHelper<[HostFuncDef<StateProvider, HostError, Extra>; N]>;
 /// Borrowed view of a name-sorted host function library.
 ///
 /// Function indices refer to sorted positions, not the original input order.
-/// `SLP` supplies host state lifetimes, `LE` is the host error type, and
-/// `X` is metadata carried without interpretation by the compiler/runtime.
-pub type HostFuncLib<SLP, LE, X = ()> = private::HostFuncLibHelper<[HostFuncDef<SLP, LE, X>]>;
+/// `StateProvider` supplies host state lifetimes, `HostError` is the host error type, and
+/// `Extra` is metadata carried without interpretation by the compiler/runtime.
+pub type HostFuncLib<StateProvider, HostError, Extra = ()> =
+    private::HostFuncLibHelper<[HostFuncDef<StateProvider, HostError, Extra>]>;
 
 /// Heap-allocated, name-sorted library built from an iterator of definitions.
 ///
+/// Owns a fixed set of definitions after construction; it does not expose a growable buffer.
 /// Dereferences to [`HostFuncLib`]. Construction rejects duplicate names.
-/// `SLP`, `LE`, and `X` have the same roles as in [`HostFuncLib`].
+/// `StateProvider`, `HostError`, and `Extra` have the same roles as in [`HostFuncLib`].
 #[derive(Debug)]
-pub struct HostFuncLibBuf<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
-    func_defs: Box<[HostFuncDef<SLP, LE, X>]>,
+pub struct HostFuncLibBuf<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static = ()>
+{
+    func_defs: Box<[HostFuncDef<StateProvider, HostError, Extra>]>,
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> Deref
-    for HostFuncLibBuf<SLP, LE, X>
+impl<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static> Deref
+    for HostFuncLibBuf<StateProvider, HostError, Extra>
 {
-    type Target = HostFuncLib<SLP, LE, X>;
+    type Target = HostFuncLib<StateProvider, HostError, Extra>;
 
     fn deref(&self) -> &Self::Target {
         // SAFETY: HostFuncLibHelper is repr(transparent) over the same slice type,
@@ -51,20 +54,20 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> Deref
 
 /// Named host function and application metadata.
 ///
-/// `SLP` supplies state lifetimes, `LE` is the host error type, and `X` is metadata.
-pub struct HostFuncDef<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
+/// `StateProvider` supplies state lifetimes, `HostError` is the host error type, and `Extra` is metadata.
+pub struct HostFuncDef<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static = ()> {
     /// Name used to resolve calls from script source.
     pub func_name: SmolStr,
     /// Dispatch pointer describing the host function signature and mutability.
-    pub func_pointer: FuncPointer<SLP, LE>,
+    pub func_pointer: FuncPointer<StateProvider, HostError>,
     /// Application metadata; not interpreted by the compiler or runtime.
-    pub extra: X,
+    pub extra: Extra,
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> Clone
-    for HostFuncDef<SLP, LE, X>
+impl<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static> Clone
+    for HostFuncDef<StateProvider, HostError, Extra>
 where
-    X: Clone,
+    Extra: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -75,8 +78,8 @@ where
     }
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: std::fmt::Debug + 'static>
-    std::fmt::Debug for HostFuncDef<SLP, LE, X>
+impl<StateProvider: HostStateProvider, HostError: 'static, Extra: std::fmt::Debug + 'static>
+    std::fmt::Debug for HostFuncDef<StateProvider, HostError, Extra>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HostFuncDef")
@@ -87,20 +90,24 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: std::fmt::Debug + 's
     }
 }
 
-/// Host function definition with a static name, used by `HostFuncLibArray::new_const`.
+/// Host function definition with a static name, used by `HostFuncLibArray::new`.
 ///
 /// The generic parameters have the same meaning as in [`HostFuncDef`].
-pub struct HostFuncDefStatic<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
+pub struct HostFuncDefStatic<
+    StateProvider: HostStateProvider,
+    HostError: 'static,
+    Extra: 'static = (),
+> {
     /// Name used to resolve calls from script source.
     pub func_name: &'static str,
     /// Dispatch pointer describing the host function signature and mutability.
-    pub func_pointer: FuncPointer<SLP, LE>,
+    pub func_pointer: FuncPointer<StateProvider, HostError>,
     /// Application metadata; not interpreted by the compiler or runtime.
-    pub extra: X,
+    pub extra: Extra,
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: std::fmt::Debug + 'static>
-    std::fmt::Debug for HostFuncDefStatic<SLP, LE, X>
+impl<StateProvider: HostStateProvider, HostError: 'static, Extra: std::fmt::Debug + 'static>
+    std::fmt::Debug for HostFuncDefStatic<StateProvider, HostError, Extra>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HostFuncDefStatic")
@@ -111,8 +118,8 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: std::fmt::Debug + 's
     }
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: Clone + 'static> Clone
-    for HostFuncDefStatic<SLP, LE, X>
+impl<StateProvider: HostStateProvider, HostError: 'static, Extra: Clone + 'static> Clone
+    for HostFuncDefStatic<StateProvider, HostError, Extra>
 {
     fn clone(&self) -> Self {
         Self {
@@ -125,7 +132,7 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: Clone + 'static> Clo
 
 /// Script argument count, return count, and host state access required by a function.
 #[derive(Debug, Clone)]
-pub struct FuncPointerProperty {
+pub struct HostFuncSignature {
     /// Number of script values consumed by one call.
     pub input_count: usize,
     /// Number of script values produced by a successful call.
@@ -136,7 +143,7 @@ pub struct FuncPointerProperty {
 
 /// Host function dispatch failure or an application-supplied error.
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum FuncPointerCallError<LE> {
+pub enum FuncPointerCallError<HostError> {
     /// A mutable host function was called using shared state access.
     #[error("Incorrect state mutability")]
     IncorrectStateMutability,
@@ -145,22 +152,22 @@ pub enum FuncPointerCallError<LE> {
     InsufficientLuaminValues,
     /// Application error returned by the host function or argument conversion.
     #[error("Library error: {0}")]
-    LibError(Box<LE>),
+    LibError(Box<HostError>),
 }
 
 /// Stack operations required by generated host function dispatch.
 ///
 /// Arguments are popped from the end and results pushed in source order.
-/// `Vec<LuaminValue>` and `SmallVec` implement this trait. `LE` identifies
+/// `Vec<LuaminValue>` and `SmallVec` implement this trait. `HostError` identifies
 /// the host error type used by the surrounding function-pointer interface.
-pub trait FuncPointerCallStackOp<LE> {
+pub trait FuncPointerCallStackOp<HostError> {
     /// Pushes a value onto the top of the stack.
     fn push_element(&mut self, element: LuaminValue);
     /// Removes the top value, or returns `None` for an empty stack.
     fn pop_element(&mut self) -> Option<LuaminValue>;
 }
 
-impl<LE> FuncPointerCallStackOp<LE> for Vec<LuaminValue> {
+impl<HostError> FuncPointerCallStackOp<HostError> for Vec<LuaminValue> {
     fn push_element(&mut self, element: LuaminValue) {
         self.push(element);
     }
@@ -170,7 +177,7 @@ impl<LE> FuncPointerCallStackOp<LE> for Vec<LuaminValue> {
     }
 }
 
-impl<LE, A> FuncPointerCallStackOp<LE> for SmallVec<A>
+impl<HostError, A> FuncPointerCallStackOp<HostError> for SmallVec<A>
 where
     A: smallvec::Array<Item = LuaminValue>,
 {
@@ -194,8 +201,8 @@ pub enum GasError<E> {
     Other(#[source] E),
 }
 
-impl<LE> From<GasError<LE>> for GasError<FuncPointerCallError<LE>> {
-    fn from(value: GasError<LE>) -> Self {
+impl<HostError> From<GasError<HostError>> for GasError<FuncPointerCallError<HostError>> {
+    fn from(value: GasError<HostError>) -> Self {
         match value {
             GasError::GasExceeded => GasError::GasExceeded,
             GasError::Other(le) => GasError::Other(FuncPointerCallError::LibError(Box::new(le))),
@@ -208,10 +215,10 @@ luamin_macro::gen_func_pointer!(
     LuaminValue,
     LuaminGas,
     GasError,
-    FuncPointerProperty,
+    HostFuncSignature,
     FuncPointerCallError,
     FuncPointerCallStackOp,
-    FuncPointerStateLifetimeProvider,
+    HostStateProvider,
     4,
     16,
     4
@@ -225,18 +232,23 @@ pub struct DuplicateFunctionError {
     pub name: SmolStr,
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> HostFuncLibBuf<SLP, LE, X> {
+impl<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>
+    HostFuncLibBuf<StateProvider, HostError, Extra>
+{
     /// Collects definitions and sorts them lexicographically by name.
     ///
     /// # Errors
     ///
     /// Returns [`DuplicateFunctionError`] if any names are repeated.
-    pub fn new<I>(func_defs: I) -> Result<HostFuncLibBuf<SLP, LE, X>, DuplicateFunctionError>
+    pub fn new<I>(
+        func_defs: I,
+    ) -> Result<HostFuncLibBuf<StateProvider, HostError, Extra>, DuplicateFunctionError>
     where
-        I: IntoIterator<Item = HostFuncDef<SLP, LE, X>>,
+        I: IntoIterator<Item = HostFuncDef<StateProvider, HostError, Extra>>,
     {
-        let func_defs: Vec<HostFuncDef<SLP, LE, X>> = func_defs.into_iter().collect();
-        let mut func_defs: Box<[HostFuncDef<SLP, LE, X>]> = func_defs.into();
+        let func_defs: Vec<HostFuncDef<StateProvider, HostError, Extra>> =
+            func_defs.into_iter().collect();
+        let mut func_defs: Box<[HostFuncDef<StateProvider, HostError, Extra>]> = func_defs.into();
         func_defs.sort_by(|a, b| a.func_name.cmp(&b.func_name));
 
         for i in 1..func_defs.len() {
@@ -251,8 +263,8 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> HostFuncLib
     }
 }
 
-impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
-    HostFuncLibArray<N, SLP, LE, X>
+impl<const N: usize, StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>
+    HostFuncLibArray<N, StateProvider, HostError, Extra>
 {
     /// Constructs a fixed-size library, sorting definitions by name.
     ///
@@ -262,7 +274,9 @@ impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'sta
     /// # Panics
     ///
     /// Panics if two definitions have the same function name.
-    pub const fn new_const(func_def_statics: [HostFuncDefStatic<SLP, LE, X>; N]) -> Self {
+    pub const fn new(
+        func_def_statics: [HostFuncDefStatic<StateProvider, HostError, Extra>; N],
+    ) -> Self {
         const fn str_gt(a: &str, b: &str) -> bool {
             let a_bytes = a.as_bytes();
             let b_bytes = b.as_bytes();
@@ -305,7 +319,7 @@ impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'sta
         }
 
         assert!(
-            !std::mem::needs_drop::<X>(),
+            !std::mem::needs_drop::<Extra>(),
             "HostFuncDef extra type must not implement Drop"
         );
 
@@ -342,7 +356,7 @@ impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'sta
         i = 0;
         while i < N {
             // SAFETY: i < N. Every field is read once; the source array is
-            // forgotten below, and X is checked not to need dropping.
+            // forgotten below, and Extra is checked not to need dropping.
             unsafe {
                 let func_def_static = func_def_statics_ptr.add(i);
                 let func_name = std::ptr::addr_of!((*func_def_static).func_name);
@@ -362,18 +376,24 @@ impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'sta
         // SAFETY: all N elements have been initialized; MaybeUninit<T> has
         // the layout of T, and the source storage does not drop its contents.
         unsafe {
-            let func_defs = &func_defs as *const _ as *const [HostFuncDef<SLP, LE, X>; N];
+            let func_defs =
+                &func_defs as *const _ as *const [HostFuncDef<StateProvider, HostError, Extra>; N];
             let func_defs = func_defs.read();
             Self { func_defs }
         }
     }
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> HostFuncLib<SLP, LE, X> {
+impl<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>
+    HostFuncLib<StateProvider, HostError, Extra>
+{
     /// Looks up a function by name, returning its sorted index and definition.
     ///
     /// Returns `None` when the name is absent.
-    pub fn get_func_def(&self, func_name: &str) -> Option<(usize, &HostFuncDef<SLP, LE, X>)> {
+    pub fn find_by_name(
+        &self,
+        func_name: &str,
+    ) -> Option<(usize, &HostFuncDef<StateProvider, HostError, Extra>)> {
         let index = self
             .func_defs
             .binary_search_by(|func_def| func_def.func_name.as_str().cmp(func_name))
@@ -382,17 +402,18 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> HostFuncLib
     }
 
     /// Returns the definition at the zero-based sorted index, or `None` if out of bounds.
-    pub fn kth_func_def(&self, kth: usize) -> Option<&HostFuncDef<SLP, LE, X>> {
-        self.func_defs.get(kth)
+    pub fn get(&self, index: usize) -> Option<&HostFuncDef<StateProvider, HostError, Extra>> {
+        self.func_defs.get(index)
     }
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> HostFuncDef<SLP, LE, X>
+impl<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>
+    HostFuncDef<StateProvider, HostError, Extra>
 where
-    X: Default,
+    Extra: Default,
 {
-    /// Creates a named definition using `X::default()` for its metadata.
-    pub fn new<FN>(func_name: FN, func_pointer: FuncPointer<SLP, LE>) -> Self
+    /// Creates a named definition using `Extra::default()` for its metadata.
+    pub fn new<FN>(func_name: FN, func_pointer: FuncPointer<StateProvider, HostError>) -> Self
     where
         FN: AsRef<str>,
     {
@@ -404,9 +425,15 @@ where
     }
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> HostFuncDef<SLP, LE, X> {
+impl<StateProvider: HostStateProvider, HostError: 'static, Extra: 'static>
+    HostFuncDef<StateProvider, HostError, Extra>
+{
     /// Creates a named definition with explicit application metadata.
-    pub fn new_with_extra<FN>(func_name: FN, func_pointer: FuncPointer<SLP, LE>, extra: X) -> Self
+    pub fn new_with_extra<FN>(
+        func_name: FN,
+        func_pointer: FuncPointer<StateProvider, HostError>,
+        extra: Extra,
+    ) -> Self
     where
         FN: AsRef<str>,
     {

@@ -16,12 +16,12 @@ mod tests;
 /// their declared length; `ArrayVec` rejects lists exceeding its capacity.
 /// List collection conversions consume unshared storage or clone elements
 /// from shared storage, and fail if the shared list cannot be borrowed.
-pub trait FromLuamin
+pub trait TryFromLuamin
 where
     Self: Sized,
 {
     /// Returns the converted value, or `None` for an incompatible type, length, or list borrow.
-    fn from_luamin(element: LuaminValue) -> Option<Self>;
+    fn try_from_luamin(element: LuaminValue) -> Option<Self>;
 }
 
 /// Converts an owned Rust value into a script value.
@@ -29,21 +29,21 @@ where
 /// `None` becomes nil. Arrays and collections become new shared lists;
 /// slices clone their elements. Passing an existing script list preserves
 /// its shared ownership. Custom user values are boxed.
-pub trait ToLuamin {
+pub trait IntoLuamin {
     /// Consumes this value and returns its script representation.
     ///
     /// ```rust
-    /// use luamin::{FromLuamin, ToLuamin};
-    /// let value = vec![1_i32, 2, 3].to_luamin();
-    /// assert_eq!(Vec::<i32>::from_luamin(value), Some(vec![1, 2, 3]));
+    /// use luamin::{IntoLuamin, TryFromLuamin};
+    /// let value = vec![1_i32, 2, 3].into_luamin();
+    /// assert_eq!(Vec::<i32>::try_from_luamin(value), Some(vec![1, 2, 3]));
     /// ```
-    fn to_luamin(self) -> LuaminValue;
+    fn into_luamin(self) -> LuaminValue;
 }
 
 // MARK: i32
 
-impl FromLuamin for i32 {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+impl TryFromLuamin for i32 {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         match element {
             LuaminValue::Number(value) => Some(value),
             _ => None,
@@ -51,16 +51,16 @@ impl FromLuamin for i32 {
     }
 }
 
-impl ToLuamin for i32 {
-    fn to_luamin(self) -> LuaminValue {
+impl IntoLuamin for i32 {
+    fn into_luamin(self) -> LuaminValue {
         LuaminValue::Number(self)
     }
 }
 
 // MARK: bool
 
-impl FromLuamin for bool {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+impl TryFromLuamin for bool {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         match element {
             LuaminValue::Bool(value) => Some(value),
             _ => None,
@@ -68,57 +68,57 @@ impl FromLuamin for bool {
     }
 }
 
-impl ToLuamin for bool {
-    fn to_luamin(self) -> LuaminValue {
+impl IntoLuamin for bool {
+    fn into_luamin(self) -> LuaminValue {
         LuaminValue::Bool(self)
     }
 }
 
 // MARK: LuaminValue
 
-impl FromLuamin for LuaminValue {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+impl TryFromLuamin for LuaminValue {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         Some(element)
     }
 }
 
-impl ToLuamin for LuaminValue {
-    fn to_luamin(self) -> LuaminValue {
+impl IntoLuamin for LuaminValue {
+    fn into_luamin(self) -> LuaminValue {
         self
     }
 }
 
 // MARK: Option
 
-impl<T> FromLuamin for Option<T>
+impl<T> TryFromLuamin for Option<T>
 where
-    T: FromLuamin,
+    T: TryFromLuamin,
 {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         let value = match element {
             LuaminValue::Nil => None,
-            element => Some(T::from_luamin(element)?),
+            element => Some(T::try_from_luamin(element)?),
         };
         Some(value)
     }
 }
 
-impl<T> ToLuamin for Option<T>
+impl<T> IntoLuamin for Option<T>
 where
-    T: ToLuamin,
+    T: IntoLuamin,
 {
-    fn to_luamin(self) -> LuaminValue {
+    fn into_luamin(self) -> LuaminValue {
         match self {
             None => LuaminValue::Nil,
-            Some(value) => value.to_luamin(),
+            Some(value) => value.into_luamin(),
         }
     }
 }
 
 // MARK: LuaminUserValue
 
-impl FromLuamin for Box<dyn LuaminUserValue> {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+impl TryFromLuamin for Box<dyn LuaminUserValue> {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         match element {
             LuaminValue::UserValue(value) => Some(value),
             _ => None,
@@ -126,17 +126,17 @@ impl FromLuamin for Box<dyn LuaminUserValue> {
     }
 }
 
-impl ToLuamin for Box<dyn LuaminUserValue> {
-    fn to_luamin(self) -> LuaminValue {
+impl IntoLuamin for Box<dyn LuaminUserValue> {
+    fn into_luamin(self) -> LuaminValue {
         LuaminValue::UserValue(self)
     }
 }
 
-impl<T> FromLuamin for T
+impl<T> TryFromLuamin for T
 where
     T: LuaminUserValue + Any,
 {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         match element {
             LuaminValue::UserValue(value) => {
                 if let Ok(value) = (value as Box<dyn Any>).downcast::<T>() {
@@ -150,11 +150,11 @@ where
     }
 }
 
-impl<T> ToLuamin for T
+impl<T> IntoLuamin for T
 where
     T: LuaminUserValue,
 {
-    fn to_luamin(self) -> LuaminValue {
+    fn into_luamin(self) -> LuaminValue {
         let b: Box<dyn LuaminUserValue> = Box::new(self);
         LuaminValue::UserValue(b)
     }
@@ -162,8 +162,8 @@ where
 
 // MARK: Rc List
 
-impl FromLuamin for Rc<RefCell<Vec<LuaminValue>>> {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+impl TryFromLuamin for Rc<RefCell<Vec<LuaminValue>>> {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         match element {
             LuaminValue::List(list) => Some(list),
             _ => None,
@@ -171,111 +171,111 @@ impl FromLuamin for Rc<RefCell<Vec<LuaminValue>>> {
     }
 }
 
-impl ToLuamin for Rc<RefCell<Vec<LuaminValue>>> {
-    fn to_luamin(self) -> LuaminValue {
+impl IntoLuamin for Rc<RefCell<Vec<LuaminValue>>> {
+    fn into_luamin(self) -> LuaminValue {
         LuaminValue::List(self)
     }
 }
 
 // MARK: Array
 
-impl<T, const N: usize> FromLuamin for [T; N]
+impl<T, const N: usize> TryFromLuamin for [T; N]
 where
-    T: FromLuamin + Sized,
+    T: TryFromLuamin + Sized,
 {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         handle_list::<ArrayHandler<T, N>, _, _>(element)
     }
 }
 
-impl<T, const N: usize> ToLuamin for [T; N]
+impl<T, const N: usize> IntoLuamin for [T; N]
 where
-    T: ToLuamin + Sized,
+    T: IntoLuamin + Sized,
 {
-    fn to_luamin(self) -> LuaminValue {
+    fn into_luamin(self) -> LuaminValue {
         LuaminValue::List(Rc::new(RefCell::new(
-            self.into_iter().map(ToLuamin::to_luamin).collect(),
+            self.into_iter().map(IntoLuamin::into_luamin).collect(),
         )))
     }
 }
 
 // MARK: ArrayVec
 
-impl<T, const N: usize> FromLuamin for ArrayVec<T, N>
+impl<T, const N: usize> TryFromLuamin for ArrayVec<T, N>
 where
-    T: FromLuamin,
+    T: TryFromLuamin,
 {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         handle_list::<ArrayVecHandler<T, N>, _, _>(element)
     }
 }
 
-impl<T, const N: usize> ToLuamin for ArrayVec<T, N>
+impl<T, const N: usize> IntoLuamin for ArrayVec<T, N>
 where
-    T: ToLuamin,
+    T: IntoLuamin,
 {
-    fn to_luamin(self) -> LuaminValue {
+    fn into_luamin(self) -> LuaminValue {
         LuaminValue::List(Rc::new(RefCell::new(
-            self.into_iter().map(ToLuamin::to_luamin).collect(),
+            self.into_iter().map(IntoLuamin::into_luamin).collect(),
         )))
     }
 }
 
 // MARK: Vec
 
-impl<T> FromLuamin for Vec<T>
+impl<T> TryFromLuamin for Vec<T>
 where
-    T: FromLuamin,
+    T: TryFromLuamin,
 {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         handle_list::<CollectHandler<Self>, _, _>(element)
     }
 }
 
-impl<T> ToLuamin for Vec<T>
+impl<T> IntoLuamin for Vec<T>
 where
-    T: ToLuamin,
+    T: IntoLuamin,
 {
-    fn to_luamin(self) -> LuaminValue {
+    fn into_luamin(self) -> LuaminValue {
         LuaminValue::List(Rc::new(RefCell::new(
-            self.into_iter().map(ToLuamin::to_luamin).collect(),
+            self.into_iter().map(IntoLuamin::into_luamin).collect(),
         )))
     }
 }
 
 // MARK: SmallVec
 
-impl<T, A> FromLuamin for SmallVec<A>
+impl<T, A> TryFromLuamin for SmallVec<A>
 where
-    T: FromLuamin,
+    T: TryFromLuamin,
     A: smallvec::Array<Item = T>,
 {
-    fn from_luamin(element: LuaminValue) -> Option<Self> {
+    fn try_from_luamin(element: LuaminValue) -> Option<Self> {
         handle_list::<CollectHandler<Self>, _, _>(element)
     }
 }
 
-impl<T, A> ToLuamin for SmallVec<A>
+impl<T, A> IntoLuamin for SmallVec<A>
 where
-    T: ToLuamin,
+    T: IntoLuamin,
     A: smallvec::Array<Item = T>,
 {
-    fn to_luamin(self) -> LuaminValue {
+    fn into_luamin(self) -> LuaminValue {
         LuaminValue::List(Rc::new(RefCell::new(
-            self.into_iter().map(ToLuamin::to_luamin).collect(),
+            self.into_iter().map(IntoLuamin::into_luamin).collect(),
         )))
     }
 }
 
 // MARK: Slice ref
 
-impl<T> ToLuamin for &[T]
+impl<T> IntoLuamin for &[T]
 where
-    T: ToLuamin + Clone,
+    T: IntoLuamin + Clone,
 {
-    fn to_luamin(self) -> LuaminValue {
+    fn into_luamin(self) -> LuaminValue {
         LuaminValue::List(Rc::new(RefCell::new(
-            self.iter().cloned().map(ToLuamin::to_luamin).collect(),
+            self.iter().cloned().map(IntoLuamin::into_luamin).collect(),
         )))
     }
 }
@@ -341,18 +341,18 @@ where
 
 fn handle_list<H, T, R>(element: LuaminValue) -> Option<R>
 where
-    T: FromLuamin,
+    T: TryFromLuamin,
     H: IterHandlerAux<T, R>,
 {
     match element {
         LuaminValue::List(list) => match Rc::try_unwrap(list) {
             Ok(list) => {
                 let list = list.into_inner();
-                H::handle_iter(list.into_iter().map(T::from_luamin))
+                H::handle_iter(list.into_iter().map(T::try_from_luamin))
             }
             Err(list) => {
                 let list = list.try_borrow().ok()?;
-                H::handle_iter(list.iter().cloned().map(T::from_luamin))
+                H::handle_iter(list.iter().cloned().map(T::try_from_luamin))
             }
         },
         _ => None,

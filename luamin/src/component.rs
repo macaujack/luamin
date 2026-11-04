@@ -1,13 +1,13 @@
 use smol_str::SmolStr;
 
-// MARK: Ix
+// MARK: Instruction
 
 /// Virtual machine instruction. Stack indices are zero-based from the bottom.
 ///
 /// Jump offsets are relative to the next instruction. Generated scripts provide
 /// valid indices and control flow; these instructions are exposed for inspection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Ix {
+pub enum Instruction {
     /// Pushes the supplied integer.
     PushNumber(i32),
     /// Pushes the supplied boolean.

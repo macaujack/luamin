@@ -1,6 +1,6 @@
 use crate::{
     func_lib::{FuncPointer, GasError, HostFuncDef, HostFuncLibBuf},
-    lexer::luamin_lex,
+    parser::luamin_parse,
     runtime::{LuaminGas, LuaminValue},
 };
 
@@ -13,7 +13,7 @@ struct State {
 
 #[derive(Debug, Clone)]
 struct StateLifetimeProvider;
-impl FuncPointerStateLifetimeProvider for StateLifetimeProvider {
+impl HostStateProvider for StateLifetimeProvider {
     type StateWithLifetimes<'r0, 'r1, 'r2, 'r3> = State;
 }
 
@@ -60,7 +60,7 @@ fn compile(
     LuaminCodegenError,
 > {
     let mut codegen = get_codegen();
-    let (directive, stmts) = luamin_lex(input).unwrap();
+    let (directive, stmts) = luamin_parse(input).unwrap();
     codegen.codegen(&[], &directive, &stmts)
 }
 
@@ -74,7 +74,7 @@ fn compile_mut(
     LuaminCodegenError,
 > {
     let mut codegen = get_codegen();
-    let (directive, stmts) = luamin_lex(input).unwrap();
+    let (directive, stmts) = luamin_parse(input).unwrap();
     codegen.codegen_mut(&[], &directive, &stmts)
 }
 
@@ -123,5 +123,5 @@ fn test_show_ixs() {
     "#,
     )
     .unwrap();
-    println!("{:#?}", script.ixs());
+    println!("{:#?}", script.instructions());
 }

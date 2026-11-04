@@ -52,7 +52,7 @@ fn test_luamin_lex() {
         foo,bar=1, nil,3
 
     "#;
-    let (directive, stmts) = luamin_lex(INPUT1).unwrap();
+    let (directive, stmts) = luamin_parse(INPUT1).unwrap();
     assert!(directive.param_list.is_none());
     assert!(directive.list_base_index.is_none());
     assert_eq!(stmts.len(), 2);
@@ -66,7 +66,7 @@ fn test_luamin_lex() {
         foo,bar=1, nil,3
 
     "#;
-    let (directive, stmts) = luamin_lex(INPUT2).unwrap();
+    let (directive, stmts) = luamin_parse(INPUT2).unwrap();
     assert_eq!(directive.param_list.unwrap(), vec!["p1", "p2"]);
     assert_eq!(directive.list_base_index.unwrap(), 1);
     assert_eq!(stmts.len(), 2);
@@ -313,7 +313,7 @@ fn test_parse_literal_hash_string() {
 
 #[test]
 fn test_parse_with_comments() {
-    let (_directive, stmts) = luamin_lex(
+    let (_directive, stmts) = luamin_parse(
         r#"
         -- initial comment
         local a = 42   -- forty-two  
@@ -347,13 +347,13 @@ fn test_show_ast() {
     let input = r#"
         local function = 4
     "#;
-    match luamin_lex(input) {
+    match luamin_parse(input) {
         Ok(stmts) => {
             println!("Lex success");
             println!("{:#?}", stmts);
         }
         Err(e) => {
-            println!("Lex error");
+            println!("Parse error");
             println!("{}", e);
         }
     }

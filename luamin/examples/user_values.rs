@@ -2,8 +2,8 @@
 //! Run: cargo run -p luamin --example user_values
 
 use luamin::{
-    FromLuamin, HostFuncLibBuf, LuaminCompiler, LuaminExecutor, LuaminGas, LuaminUserValue,
-    LuaminValue, ToLuamin, luamin_bindgen,
+    HostFuncLibBuf, IntoLuamin, LuaminCompiler, LuaminExecutor, LuaminGas, LuaminUserValue,
+    LuaminValue, TryFromLuamin, luamin_bindgen,
     runtime::{CloneGasCost, PartialEqGasCost},
 };
 
@@ -68,9 +68,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     // Custom fields are accessed through host methods, not script field syntax.
     let position = Position { x: 4, y: 5 };
-    let mut values =
-        Host.execute_luamin_script(&mut LuaminGas::new(1_000), &script, &[position.to_luamin()])?;
-    let moved = Position::from_luamin(values.next().expect("moved position"))
+    let mut values = Host.execute_script(
+        &mut LuaminGas::new(1_000),
+        &script,
+        &[position.into_luamin()],
+    )?;
+    let moved = Position::try_from_luamin(values.next().expect("moved position"))
         .expect("the expected concrete user-value type");
     assert_eq!(moved, Position { x: 7, y: 3 });
     assert_eq!(values.next(), Some(LuaminValue::Number(7)));

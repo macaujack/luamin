@@ -1,10 +1,10 @@
 use std::{cell::RefCell, error::Error as _, rc::Rc};
 
 use luamin::{
-    LexErrorKind, LuaminCompiler, LuaminExecutor, LuaminGas, LuaminRuntimeError, LuaminValue,
-    MAX_SOURCE_BYTES, MAX_SYNTAX_DEPTH,
+    LuaminCompiler, LuaminExecutor, LuaminGas, LuaminRuntimeError, LuaminValue, MAX_SOURCE_BYTES,
+    MAX_SYNTAX_DEPTH, ParseErrorKind,
     func_lib::{GasError, HostFuncLibArray},
-    lexer::luamin_lex,
+    parser::luamin_parse,
     runtime::MAX_LIST_LEN,
 };
 
@@ -25,10 +25,10 @@ fn run(
     source: &str,
     gas: &mut LuaminGas,
 ) -> Result<Vec<LuaminValue>, GasError<LuaminRuntimeError<HostError>>> {
-    let lib = HostFuncLibArray::new_const(StateLifetimeProvider::new_func_def_statics());
+    let lib = HostFuncLibArray::new(StateLifetimeProvider::new_func_def_statics());
     let (script, _) = LuaminCompiler::new(&lib, 1).compile(&[], source).unwrap();
     State
-        .execute_luamin_script(gas, &script, &[])
+        .execute_script(gas, &script, &[])
         .map(Iterator::collect)
 }
 
@@ -91,8 +91,8 @@ fn cyclic_lists_and_borrowed_lists_have_bounded_debug_output() {
 #[test]
 fn source_errors_keep_original_utf8_positions() {
     let source = "\n  -- 中文\n  local = 1";
-    let error = luamin_lex(source).unwrap_err();
-    assert_eq!(error.kind, LexErrorKind::Syntax);
+    let error = luamin_parse(source).unwrap_err();
+    assert_eq!(error.kind, ParseErrorKind::Syntax);
     assert_eq!(error.line, 3);
     assert!(source.is_char_boundary(error.offset));
     assert_eq!(
@@ -115,20 +115,20 @@ fn parser_limits_reject_deep_or_oversized_source() {
         ")".repeat(MAX_SYNTAX_DEPTH)
     );
     assert_eq!(
-        luamin_lex(&deep).unwrap_err().kind,
-        LexErrorKind::NestingTooDeep
+        luamin_parse(&deep).unwrap_err().kind,
+        ParseErrorKind::NestingTooDeep
     );
     let huge = " ".repeat(MAX_SOURCE_BYTES + 1);
     assert_eq!(
-        luamin_lex(&huge).unwrap_err().kind,
-        LexErrorKind::SourceTooLarge
+        luamin_parse(&huge).unwrap_err().kind,
+        ParseErrorKind::SourceTooLarge
     );
     let operators = format!("return {}1", "not ".repeat(2_000));
-    assert!(luamin_lex(&operators).is_err());
+    assert!(luamin_parse(&operators).is_err());
     let operators = format!("return 1{}", "+1".repeat(2_000));
-    assert!(luamin_lex(&operators).is_err());
+    assert!(luamin_parse(&operators).is_err());
     assert!(
-        luamin_lex(&format!(
+        luamin_parse(&format!(
             "return h\"{}\" -- {}",
             "(".repeat(100),
             "do ".repeat(100)
@@ -137,9 +137,9 @@ fn parser_limits_reject_deep_or_oversized_source() {
     );
     for depth in 0..=MAX_SYNTAX_DEPTH + 1 {
         let source = format!("return {}1{}", "(".repeat(depth), ")".repeat(depth));
-        let _ = luamin_lex(&source);
+        let _ = luamin_parse(&source);
         let source = format!("{}return 1{}", "do ".repeat(depth), " end".repeat(depth));
-        let _ = luamin_lex(&source);
+        let _ = luamin_parse(&source);
     }
 }
 
@@ -149,7 +149,7 @@ fn syntax_limits_count_nodes_independently_of_literal_width() {
 
     for number in [1, 123_456_789] {
         let source = format!("return {{{}}}", vec![number.to_string(); 2_000].join(","));
-        let (_, stmts) = luamin_lex(&source).unwrap();
+        let (_, stmts) = luamin_parse(&source).unwrap();
         let [Stmt::Return(exprs)] = stmts.as_slice() else {
             panic!("Expected a return statement");
         };
@@ -167,7 +167,7 @@ fn syntax_limits_count_nodes_independently_of_literal_width() {
         "return {{{}}}",
         vec!["1"; luamin::MAX_SYNTAX_NODES].join(",")
     );
-    assert!(luamin_lex(&source).is_err());
+    assert!(luamin_parse(&source).is_err());
 }
 
 #[test]
@@ -180,13 +180,13 @@ fn list_growth_and_initial_stacks_are_bounded() {
         run(&source, &mut LuaminGas::new(i32::MAX)),
         Err(GasError::Other(LuaminRuntimeError::ListTooLarge))
     ));
-    let lib = HostFuncLibArray::new_const(StateLifetimeProvider::new_func_def_statics());
+    let lib = HostFuncLibArray::new(StateLifetimeProvider::new_func_def_statics());
     let (script, _) = LuaminCompiler::new(&lib, 1)
         .compile(&[], "return 1")
         .unwrap();
     let oversized = vec![LuaminValue::Nil; luamin::MAX_RUNTIME_STACK_SIZE + 1];
     assert!(matches!(
-        State.execute_luamin_script(&mut LuaminGas::new(i32::MAX), &script, &oversized),
+        State.execute_script(&mut LuaminGas::new(i32::MAX), &script, &oversized),
         Err(GasError::Other(LuaminRuntimeError::StackOverflow))
     ));
 }
@@ -210,13 +210,13 @@ fn integer_arithmetic_wraps_consistently_and_division_is_floored() {
 
 #[test]
 fn compiler_can_be_reused_after_parse_and_codegen_errors() {
-    let lib = HostFuncLibArray::new_const(StateLifetimeProvider::new_func_def_statics());
+    let lib = HostFuncLibArray::new(StateLifetimeProvider::new_func_def_statics());
     let mut compiler = LuaminCompiler::new(&lib, 1);
     assert!(compiler.compile(&[], "local =").is_err());
     assert!(compiler.compile(&[], "return unknown").is_err());
     let (script, _) = compiler.compile(&[], "return 42").unwrap();
     let result: Vec<_> = State
-        .execute_luamin_script(&mut LuaminGas::new(100), &script, &[])
+        .execute_script(&mut LuaminGas::new(100), &script, &[])
         .unwrap()
         .collect();
     assert_eq!(result, vec![LuaminValue::Number(42)]);
@@ -254,6 +254,6 @@ fn malformed_source_smoke_fuzz_does_not_panic() {
             seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
             source.push(alphabet[seed as usize % alphabet.len()]);
         }
-        let _ = luamin_lex(&source);
+        let _ = luamin_parse(&source);
     }
 }
