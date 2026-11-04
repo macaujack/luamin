@@ -1,3 +1,5 @@
+#![doc = include_str!(concat!(env!("OUT_DIR"), "/README.md"))]
+
 extern crate self as luamin;
 
 // The AST/codegen modules intentionally remain available to advanced consumers.

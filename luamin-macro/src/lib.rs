@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 mod gen_func_pointer;
 mod luamin_bindgen;
 mod luamin_executor_derive;
