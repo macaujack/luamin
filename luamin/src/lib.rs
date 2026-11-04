@@ -21,7 +21,7 @@ pub use convert::{FromLuamin, ToLuamin};
 pub use func_lib::{
     DuplicateFunctionError, HostFuncDef, HostFuncDefStatic, HostFuncLibArray, HostFuncLibBuf,
 };
-pub use luamin_macro::{LuaminExecutor, gen_luamin_func};
+pub use luamin_macro::{LuaminExecutor, luamin_bindgen};
 pub use smallvec;
 pub use smol_str;
 

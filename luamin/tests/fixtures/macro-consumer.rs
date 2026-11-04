@@ -4,7 +4,7 @@ use engine::LuaminGas;
 struct TooManyLifetimes<'a, 'b, 'c, 'd, 'e>(&'a i32, &'b i32, &'c i32, &'d i32, &'e i32);
 
 #[cfg(feature = "too_many_lifetimes")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl<'a, 'b, 'c, 'd, 'e> TooManyLifetimes<'a, 'b, 'c, 'd, 'e> {
     fn bad(&self) -> Result<(), Error> {
         Ok(())
@@ -34,7 +34,7 @@ fn wrong_argument(_: &'static str, _: usize) -> Error {
     Error
 }
 
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     #[cfg(any())]
     fn disabled(&self, _: TypeThatDoesNotExist) -> Result<(), Error> {
@@ -53,14 +53,14 @@ impl Host {
 }
 
 #[cfg(any())]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl DoesNotExist {
     fn missing(&self) -> Result<(), Error> {
         Ok(())
     }
 }
 
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 #[cfg(any())]
 impl AlsoDoesNotExist {
     fn missing(&self) -> Result<(), Error> {
@@ -74,7 +74,7 @@ struct Borrowed<'a, T, const N: usize> {
     values: &'a [T; N],
 }
 
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl<'a, T: 'static, const N: usize> Borrowed<'a, T, N> {
     fn len(&self) -> Result<i32, Error> {
         Ok(self.values.len() as i32)
@@ -82,7 +82,7 @@ impl<'a, T: 'static, const N: usize> Borrowed<'a, T, N> {
 }
 
 #[cfg(feature = "missing_option")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error)]
 impl Host {
     fn bad(&self) -> Result<(), Error> {
         Ok(())
@@ -90,7 +90,7 @@ impl Host {
 }
 
 #[cfg(feature = "unsafe_method")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     unsafe fn bad(&self) -> Result<(), Error> {
         Ok(())
@@ -98,7 +98,7 @@ impl Host {
 }
 
 #[cfg(feature = "too_many_inputs")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     fn bad(
         &self,
@@ -124,7 +124,7 @@ impl Host {
 }
 
 #[cfg(feature = "too_many_outputs")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     fn bad(&self) -> Result<(i32, i32, i32, i32), Error> {
         Ok((1, 2, 3, 4))
@@ -132,7 +132,7 @@ impl Host {
 }
 
 #[cfg(feature = "invalid_gas")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     #[gas(-1)]
     fn bad(&self) -> Result<(), Error> {
@@ -141,7 +141,7 @@ impl Host {
 }
 
 #[cfg(feature = "conditional_attribute")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     #[cfg_attr(all(), inline)]
     fn bad(&self) -> Result<(), Error> {
@@ -150,7 +150,7 @@ impl Host {
 }
 
 #[cfg(feature = "value_receiver")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     fn bad(self) -> Result<(), Error> {
         Ok(())
@@ -158,7 +158,7 @@ impl Host {
 }
 
 #[cfg(feature = "manual_gas")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     #[gas(2)]
     fn bad(&self, _: &mut LuaminGas) -> Result<(), GasError<Error>> {
@@ -167,7 +167,7 @@ impl Host {
 }
 
 #[cfg(feature = "method_generics")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     fn bad<T>(&self) -> Result<(), Error> {
         Ok(())
@@ -175,7 +175,7 @@ impl Host {
 }
 
 #[cfg(feature = "unsupported_output")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     fn bad(&self) -> Result<impl Copy, Error> {
         Ok(1)
@@ -183,7 +183,7 @@ impl Host {
 }
 
 #[cfg(feature = "wrong_error")]
-#[engine::gen_luamin_func(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
+#[engine::luamin_bindgen(crate = engine, private_lifetime_provider_struct, error_type = Error, incorrect_arg_type_error_func = wrong_argument)]
 impl Host {
     fn bad(&self) -> Result<(), ()> {
         Ok(())

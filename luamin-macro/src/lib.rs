@@ -1,5 +1,5 @@
 mod gen_func_pointer;
-mod gen_luamin_func;
+mod luamin_bindgen;
 mod luamin_executor_derive;
 mod luamin_user_value_derive;
 
@@ -36,7 +36,7 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
 /// Implements the runtime's `LuaminExecutor` trait using its default methods.
 ///
 /// Preserves the input type's generics and where clause. This derive does not
-/// register host functions; use `gen_luamin_func` on an inherent impl for that.
+/// register host functions; use [`luamin_bindgen`] on an inherent impl for that.
 ///
 /// The runtime path defaults to `::luamin`. Set
 /// `#[luamin(crate = path::to::runtime)]` on the type when the dependency is
@@ -115,11 +115,11 @@ pub fn luamin_executor_derive(input: proc_macro::TokenStream) -> proc_macro::Tok
 /// `#[cfg(...)]` on the impl and methods is propagated to generated items.
 /// `cfg_attr` on either is rejected; method parameter attributes are also rejected.
 #[proc_macro_attribute]
-pub fn gen_luamin_func(
+pub fn luamin_bindgen(
     attr: proc_macro::TokenStream,
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    gen_luamin_func::gen_luamin_func(attr.into(), item.into())
+    luamin_bindgen::luamin_bindgen(attr.into(), item.into())
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

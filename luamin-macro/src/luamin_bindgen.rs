@@ -6,7 +6,7 @@ use syn::{
     PathArguments, ReturnType, Type, WherePredicate, ext::IdentExt, parse::Parser,
 };
 
-pub fn gen_luamin_func(
+pub fn luamin_bindgen(
     attr: proc_macro2::TokenStream,
     item: proc_macro2::TokenStream,
 ) -> syn::Result<proc_macro2::TokenStream> {

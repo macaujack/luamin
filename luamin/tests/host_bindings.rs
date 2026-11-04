@@ -37,7 +37,7 @@ struct FuncDefExtra {
     precedence: usize,
 }
 
-#[gen_luamin_func(
+#[luamin_bindgen(
     private_lifetime_provider_struct,
     incorrect_arg_type_error_func = new_incorrect_type_error,
     error_type = StateError,

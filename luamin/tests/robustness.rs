@@ -18,7 +18,7 @@ fn wrong_argument(_: &'static str, _: usize) -> HostError {
     HostError
 }
 
-#[luamin::gen_luamin_func(private_lifetime_provider_struct, error_type = HostError, incorrect_arg_type_error_func = wrong_argument)]
+#[luamin::luamin_bindgen(private_lifetime_provider_struct, error_type = HostError, incorrect_arg_type_error_func = wrong_argument)]
 impl State {}
 
 fn run(

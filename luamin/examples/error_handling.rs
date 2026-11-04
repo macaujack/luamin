@@ -4,7 +4,7 @@
 use luamin::{
     GasError, HostFuncLibBuf, LuaminCompileError, LuaminCompiler, LuaminExecutor, LuaminGas,
     LuaminRuntimeError, codegen::LuaminCodegenError, func_lib::FuncPointerCallError,
-    gen_luamin_func,
+    luamin_bindgen,
 };
 
 #[derive(LuaminExecutor)]
@@ -22,7 +22,7 @@ fn wrong_argument(function: &'static str, argument: usize) -> HostError {
     HostError::Argument(function, argument)
 }
 
-#[gen_luamin_func(
+#[luamin_bindgen(
     private_lifetime_provider_struct,
     error_type = HostError,
     incorrect_arg_type_error_func = wrong_argument
