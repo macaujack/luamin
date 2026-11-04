@@ -193,6 +193,11 @@ cargo run -p luamin --example host_functions
 
 See the [API reference](https://docs.rs/luamin) for individual types and methods.
 
+## License
+
+Luamin and its procedural macros are licensed under the MIT License.
+Copyright (c) 2026 macaujack. The full license text is included in `LICENSE`.
+
 ## Development
 
 The workspace contains two crates:

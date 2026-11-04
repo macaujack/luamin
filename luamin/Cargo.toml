@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
 readme = "../README.md"
+license = "MIT"
+license-file = "../LICENSE"
 
 [dependencies]
 arrayvec = "0.7.8"

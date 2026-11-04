@@ -92,3 +92,9 @@ or re-exported.
 
 See the [macro API reference](https://docs.rs/luamin-macro) for full signature,
 conversion, and generated-item details.
+
+## License
+
+Licensed under the MIT License. Copyright (c) 2026 macaujack.
+The full license text is in the repository's root `LICENSE` file and is also
+included as `LICENSE` in this crate's package.
