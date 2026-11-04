@@ -187,6 +187,7 @@ and assertions of the expected behavior.
 | [user_values](https://docs.rs/crate/luamin/latest/source/examples/user_values.rs) | Define custom values with equality and clone/comparison gas costs. |
 | [error_handling](https://docs.rs/crate/luamin/latest/source/examples/error_handling.rs) | Distinguish parsing, compilation, runtime, and host failures. |
 | [borrowed_state](https://docs.rs/crate/luamin/latest/source/examples/borrowed_state.rs) | Bind host state borrowing application data. |
+| [recursive](https://docs.rs/crate/luamin/latest/source/examples/recursive.rs) | Alternate Rust and Luamin calls by re-entering a compiled script with a shared gas budget. |
 
 From the workspace root, run an example by name:
 
