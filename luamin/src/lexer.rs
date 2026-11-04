@@ -16,21 +16,33 @@ use crate::component::{
     PlaceExpr, RepeatStmt, Stmt, ValueExpr, WhileStmt,
 };
 
+/// Category of source parsing failure; additional categories may be added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LexErrorKind {
+    /// Source does not match the supported grammar.
     Syntax,
+    /// Source exceeds [`crate::MAX_SOURCE_BYTES`].
     SourceTooLarge,
+    /// Parser nesting or syntax tree complexity exceeds the supported limit.
     NestingTooDeep,
+    /// Reserved category for excessive token counts; not currently emitted by the parser.
     TooManyTokens,
 }
 
+/// Source parsing diagnostic with a location in the original input.
+///
+/// The display representation includes the message, line, and column.
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("{message} at line {line}, column {column}")]
 pub struct LexError {
+    /// Machine-readable error category.
     pub kind: LexErrorKind,
+    /// Zero-based UTF-8 byte offset in the original source.
     pub offset: usize,
+    /// One-based source line number.
     pub line: usize,
+    /// One-based Unicode character column within the source line.
     pub column: usize,
     message: String,
 }
@@ -50,6 +62,16 @@ impl LexError {
     }
 }
 
+/// Parses source into its directives and statement tree.
+///
+/// Despite its name, this function performs syntax parsing, not only tokenization.
+/// Host function resolution and semantic checks occur during code generation.
+///
+/// # Errors
+///
+/// Returns [`LexError`] for invalid syntax, oversized source, excessive nesting,
+/// or a syntax tree exceeding the node limit. Some complexity diagnostics point
+/// at the start of the source rather than an individual offending node.
 pub fn luamin_lex(input: &str) -> Result<(Directive, Vec<Stmt>), LexError> {
     if input.len() > crate::MAX_SOURCE_BYTES {
         return Err(LexError::new(

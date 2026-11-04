@@ -8,14 +8,35 @@ use crate::runtime::{LuaminUserValue, LuaminValue};
 #[cfg(test)]
 mod tests;
 
+/// Consumes a script value and attempts to convert it into a Rust value.
+///
+/// Built-in implementations cover integers, booleans, script values, optional
+/// values, user values, and lists. `Option<T>` maps nil to `Some(None)`;
+/// `None` as the outer result means conversion failed. Arrays require exactly
+/// their declared length; `ArrayVec` rejects lists exceeding its capacity.
+/// List collection conversions consume unshared storage or clone elements
+/// from shared storage, and fail if the shared list cannot be borrowed.
 pub trait FromLuamin
 where
     Self: Sized,
 {
+    /// Returns the converted value, or `None` for an incompatible type, length, or list borrow.
     fn from_luamin(element: LuaminValue) -> Option<Self>;
 }
 
+/// Converts an owned Rust value into a script value.
+///
+/// `None` becomes nil. Arrays and collections become new shared lists;
+/// slices clone their elements. Passing an existing script list preserves
+/// its shared ownership. Custom user values are boxed.
 pub trait ToLuamin {
+    /// Consumes this value and returns its script representation.
+    ///
+    /// ```rust
+    /// use luamin::{FromLuamin, ToLuamin};
+    /// let value = vec![1_i32, 2, 3].to_luamin();
+    /// assert_eq!(Vec::<i32>::from_luamin(value), Some(vec![1, 2, 3]));
+    /// ```
     fn to_luamin(self) -> LuaminValue;
 }
 

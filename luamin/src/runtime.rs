@@ -30,16 +30,31 @@ const GAS_COST_ARITH_UNARY: i32 = 2;
 // MARK: LuaminValue
 
 const LIKELY_STACK_CAP: usize = 32;
+/// Maximum list length produced by script list assignment (65,536 elements).
+///
+/// Host-provided lists are not validated against this limit on conversion.
 pub const MAX_LIST_LEN: usize = 65_536;
 
+/// Dynamically typed value stored on the script stack.
+///
+/// Cloning a list shares its storage; cloning a user value clones the boxed
+/// object. Lists compare by identity, user values by concrete type and equality,
+/// and scalar values by value. Only nil and false are falsy; zero, empty lists,
+/// and all user values are truthy. Debug formatting handles cycles and active borrows.
 #[derive(Clone)]
 pub enum LuaminValue {
+    /// Absence of a value; also used for missing parameters and list elements.
     Nil,
+    /// Signed 32-bit integer, also used for hash-string literals.
     Number(i32),
+    /// Boolean value.
     Bool(bool),
-    // Lists share ownership and use identity equality. Reference cycles are
-    // supported, but must be broken by the embedding application to reclaim them.
+    /// Shared, mutable list with identity equality.
+    ///
+    /// Cloning preserves aliases. Reference cycles must be broken by the
+    /// embedding application to reclaim their storage.
     List(Rc<RefCell<Vec<LuaminValue>>>),
+    /// Application-defined, clonable value with dynamic equality and gas costs.
     UserValue(Box<dyn LuaminUserValue>),
 }
 
@@ -98,6 +113,12 @@ fn fmt_value(
     }
 }
 
+/// Remaining gas budget for script instructions and host calls.
+///
+/// The default budget is zero. A failed charge marks the budget exhausted;
+/// subsequent charges fail even if they cost zero. Reaching exactly zero is
+/// allowed. Display prints the remaining budget, or -1 after exhaustion.
+/// Gas bounds interpreter work; host functions must charge for their own work.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct LuaminGas(i32);
@@ -109,13 +130,29 @@ impl std::fmt::Display for LuaminGas {
 }
 
 impl LuaminGas {
+    /// Large finite budget of one billion units; this is not unlimited gas.
     pub const INF: Self = Self(1_000_000_000);
 
+    /// Creates a budget; a negative amount creates an already-exhausted budget.
     pub const fn new(gas: i32) -> Self {
         Self(if gas < 0 { -1 } else { gas })
     }
 
-    /// Returns true on exhaustion or a negative cost. Exhaustion is sticky.
+    /// Charges `gas_cost` and returns whether the budget has been exceeded.
+    ///
+    /// A negative cost, an already-exhausted budget, or a cost exceeding the
+    /// remaining budget marks the budget exhausted. Charging the exact remaining
+    /// amount succeeds. Callers must stop work when this returns true.
+    ///
+    /// `try_consume` provides the same operation as a result.
+    ///
+    /// ```rust
+    /// use luamin::LuaminGas;
+    /// let mut gas = LuaminGas::new(2);
+    /// assert!(!gas.consume(2));
+    /// assert!(gas.consume(1));
+    /// assert!(gas.has_exceeded());
+    /// ```
     #[must_use]
     pub const fn consume(&mut self, gas_cost: i32) -> bool {
         if gas_cost < 0 || self.0 < 0 || gas_cost > self.0 {
@@ -126,10 +163,15 @@ impl LuaminGas {
         self.has_exceeded()
     }
 
+    /// Returns whether a failed or invalid charge has exhausted this budget.
     pub const fn has_exceeded(&self) -> bool {
         self.0 < 0
     }
 
+    /// Charges gas, returning [`GasError::GasExceeded`] on an invalid or excessive charge.
+    ///
+    /// Has the same sticky exhaustion behavior as [`Self::consume`]. The generic
+    /// `E` allows the error to be used directly in the caller's result type.
     pub const fn try_consume<E>(&mut self, gas_cost: i32) -> Result<(), GasError<E>> {
         if self.consume(gas_cost) {
             Err(GasError::GasExceeded)
@@ -202,11 +244,22 @@ mod dyn_partial_eq {
     }
 }
 
+/// Gas cost of cloning a value during script execution.
+///
+/// Costs must be nonnegative. `Copy` types have a blanket implementation based
+/// on their size; other user values must provide an implementation. Calling
+/// `Clone::clone` directly does not automatically charge this cost.
 pub trait CloneGasCost {
+    /// Returns the nonnegative charge for cloning this value.
     fn clone_gas_cost(&self) -> i32;
 }
 
+/// Additional gas cost of comparing two values for equality.
+///
+/// `Copy` types have a blanket implementation based on their size. Other user
+/// values must provide an implementation. Direct Rust equality does not charge gas.
 pub trait PartialEqGasCost {
+    /// Returns the nonnegative additional comparison charge for these values.
     fn partial_eq_gas_cost(&self, other: &Self) -> i32;
 }
 
@@ -253,6 +306,12 @@ impl PartialEqGasCost for LuaminValue {
     }
 }
 
+/// Application-defined value that can be boxed in [`LuaminValue::UserValue`].
+///
+/// Implementors must be `Clone + Debug + PartialEq + 'static` and supply clone
+/// and equality gas costs. Dynamic comparisons of different concrete types are
+/// false. The `LuaminUserValue` derive supplies this marker implementation,
+/// not the required cloning, equality, debugging, or gas-cost implementations.
 pub trait LuaminUserValue:
     DynClone
     + CloneGasCost
@@ -277,30 +336,43 @@ impl Clone for Box<dyn LuaminUserValue> {
 
 // MARK: Core
 
+/// Failure during instruction execution, excluding gas exhaustion.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum LuaminRuntimeError<LE> {
+    /// List length limit exceeded.
     #[error("List length limit exceeded")]
     ListTooLarge,
+    /// Unable to allocate list storage.
     #[error("Unable to allocate list storage")]
     AllocationFailed,
+    /// The runtime stack would exceed [`MAX_RUNTIME_STACK_SIZE`].
     #[error("Stack overflow")]
     StackOverflow,
+    /// An instruction requires more stack values than are available.
     #[error("Insufficient stack elements")]
     InsufficientLuaminValues,
+    /// Function call error; the payload contains the underlying error.
     #[error("Function call error: {0}")]
     FuncPointerCallError(FuncPointerCallError<LE>),
+    /// An instruction references a stack position that does not exist.
     #[error("Stack index out of bound")]
     StackIndexOutOfBound,
+    /// List assignment received an index that is not an integer.
     #[error("Invalid list index type")]
     InvalidListIndexType,
+    /// A translated list assignment index is negative or exceeds `i32::MAX`.
     #[error("Invalid list index when setting")]
     InvalidListIndexWhenSetting,
+    /// A list operation received a value of another type.
     #[error("Stack item not list")]
     StackItemNotList,
+    /// An active `RefCell` borrow conflicts with the requested list access.
     #[error("List unable to borrow")]
     ListUnableToBorrow,
+    /// An integer operation received a value of another type.
     #[error("Stack item not number")]
     StackItemNotNumber,
+    /// Floor division or modulo received a zero divisor.
     #[error("Division by zero")]
     DivisionByZero,
 }
@@ -316,6 +388,23 @@ impl<LE> From<GasError<FuncPointerCallError<LE>>> for GasError<LuaminRuntimeErro
     }
 }
 
+/// Executes a compiled script with shared host state access.
+///
+/// `initial_stack` is cloned in order: intrinsic parameters first, then source
+/// parameters. The script pads missing parameters with nil and drops excess
+/// values. On success, the returned owned iterator yields script return values
+/// in source order. List clones share storage, including initial-stack lists.
+///
+/// Instructions and host-call dispatch consume `gas`; generated host wrappers
+/// also apply their configured charge. Custom host functions must account for
+/// their own work. Shared access permits interior mutation and list changes.
+/// Changes and gas consumed before an error are not rolled back.
+///
+/// # Errors
+///
+/// Returns [`GasError::GasExceeded`] on exhaustion, or
+/// [`GasError::Other`] for runtime type, borrow, stack, list, arithmetic,
+/// or host errors. Initial stacks above [`MAX_RUNTIME_STACK_SIZE`] are rejected.
 pub fn luamin_execute<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>(
     state: &SLP::StateWithLifetimes<'_, '_, '_, '_>,
     gas: &mut LuaminGas,
@@ -343,6 +432,11 @@ pub fn luamin_execute<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'st
     )
 }
 
+/// Executes a compiled script with exclusive host state access.
+///
+/// Accepts both shared and mutable host methods. Parameter ordering, returned
+/// values, aliasing, gas accounting, and errors follow [`luamin_execute`].
+/// Host state and shared list changes made before an error are retained.
 pub fn luamin_execute_mut<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>(
     state: &mut SLP::StateWithLifetimes<'_, '_, '_, '_>,
     gas: &mut LuaminGas,

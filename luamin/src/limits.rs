@@ -1,8 +1,12 @@
 use crate::component::{PlaceExpr, Stmt, ValueExpr};
 
+/// Maximum accepted source length in UTF-8 bytes (1 MiB).
 pub const MAX_SOURCE_BYTES: usize = 1_048_576;
+/// Exclusive upper bound on syntax tree depth, counted from zero at root statements.
 pub const MAX_SYNTAX_DEPTH: usize = 32;
+/// Maximum number of visited statement, expression, and assignment-place nodes.
 pub const MAX_SYNTAX_NODES: usize = 16_384;
+/// Maximum number of instructions generated for one script.
 pub const MAX_INSTRUCTIONS: usize = 65_536;
 
 enum Node<'a> {

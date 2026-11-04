@@ -125,10 +125,16 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                     }
                 };
 
+                let signature_doc = format!(
+                    "Host function with {i} script inputs and {j} outputs, using {} state access.",
+                    if is_mutable { "exclusive" } else { "shared" },
+                );
                 enum_variants.push(quote! {
+                    #[doc = #signature_doc]
                     #variant_name(#variant_name<SLP, LE>)
                 });
                 type_aliases.push(quote! {
+                    #[doc = #signature_doc]
                     pub type #variant_name<SLP, LE> = #fn_pointer_type;
                 });
                 impl_clone_arms.push(quote! {
@@ -189,12 +195,22 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
     }
 
     quote! {
+        /// Maps execution lifetimes to the application's host state type.
+        ///
+        /// `SLP` in the surrounding API refers to an implementor of this trait.
+        /// Host binding macros generate a provider for each annotated state impl.
         pub trait #lifetime_provider_trait_name {
+            /// Host state with the supplied execution lifetimes substituted into its type.
             type StateWithLifetimes<#(#lifetime_generic_names),*>;
         }
 
         #(#type_aliases)*
 
+        /// Typed dispatch pointer for a host function.
+        ///
+        /// `SLP` supplies the state type and `LE` is the application error type.
+        /// Variants encode script input count, output count, and state mutability;
+        /// `property` exposes those counts without invoking the function.
         pub enum #enum_name<SLP: #lifetime_provider_trait_name, LE: 'static> {
             #(#enum_variants),*
         }
@@ -218,12 +234,20 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         }
 
         impl<SLP: #lifetime_provider_trait_name, LE: 'static> #enum_name<SLP, LE> {
+            /// Returns input/output counts and the required host state mutability.
             pub fn property(&self) -> #func_pointer_property_type_path {
                 match self {
                     #(#impl_property_arms),*
                 }
             }
 
+            /// Invokes a host function using shared state, popping arguments and pushing results.
+            ///
+            /// Arguments are popped in reverse order to preserve their original call order;
+            /// outputs are pushed in return order. A mutable function, insufficient arguments,
+            /// gas exhaustion, or a host error returns an error. Arguments already popped
+            /// on failure are not restored. This dispatch method does not itself charge gas;
+            /// the runtime and host wrapper are responsible for their respective charges.
             pub fn call<'a, #(#lifetime_generic_names),* , STK>(
                 &'a self,
                 state: &'a SLP::StateWithLifetimes<#(#lifetime_generic_names),*>,
@@ -240,6 +264,11 @@ pub fn gen_func_pointer(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 ::core::result::Result::Ok(())
             }
 
+            /// Invokes a host function using exclusive state, accepting either mutability.
+            ///
+            /// Stack ordering and failure behavior match `call`. Arguments, state changes,
+            /// and gas consumed before an error are not rolled back. The caller and host
+            /// wrapper are responsible for charging gas.
             pub fn call_mut<'a, #(#lifetime_generic_names),* , STK>(
                 &'a self,
                 state: &'a mut SLP::StateWithLifetimes<#(#lifetime_generic_names),*>,

@@ -13,36 +13,55 @@ use crate::{
     hash_string,
 };
 
+/// Semantic validation or resource-limit failure during instruction generation.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum LuaminCodegenError {
+    /// Invalid or excessively complex syntax tree.
     #[error("Invalid or excessively complex syntax tree")]
     InvalidSyntaxTree,
+    /// Instruction count limit exceeded.
     #[error("Instruction count limit exceeded")]
     TooManyInstructions,
+    /// A variable name could not be resolved; the payload identifies the name.
     #[error("Undeclared ident: {0}")]
     UndeclaredIdent(SmolStr),
+    /// A parameter list occurred outside its permitted initial position.
     #[error("Param list must be the first statement if specified")]
     IncorrectParamListPosition,
+    /// Parameters, locals, or temporaries would exceed the runtime stack limit.
     #[error("Stack overflow")]
     StackOverflow,
+    /// Cannot mutate a readonly variable.
     #[error("Cannot mutate a readonly variable")]
     MutatingReadonly,
+    /// Library function not found; the payload identifies the name.
     #[error("Library function not found: {0}")]
     LibFuncNotFound(SmolStr),
+    /// Return must be the last statement in a block.
     #[error("Return must be the last statement in a block")]
     ReturnMustBeLastStatementInBlock,
+    /// Break must be inside a loop.
     #[error("Break must be inside a loop")]
     BreakMustBeInsideLoop,
+    /// Break must be the last statement in a block.
     #[error("Break must be the last statement in a block")]
     BreakMustBeLastStatementInBlock,
+    /// Continue must be inside a loop.
     #[error("Continue must be inside a loop")]
     ContinueMustBeInsideLoop,
+    /// Continue must be the last statement in a block.
     #[error("Continue must be the last statement in a block")]
     ContinueMustBeLastStatementInBlock,
+    /// A host function requiring exclusive state access was used in a shared-state script.
     #[error("Mutable library function used when codegen to an immutable context")]
     MutableLibFuncInImmutableContext,
 }
 
+/// Reusable instruction generator for parsed syntax trees.
+///
+/// Use [`crate::LuaminCompiler`] to parse and compile source in one step.
+/// `SLP` supplies host state lifetimes, `LE` is the host error type, and `X`
+/// is per-function metadata. Generated scripts borrow the library for `'f`.
 #[derive(Debug, Clone)]
 pub struct LuaminCodegen<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
     func_lib: &'f FuncLib<SLP, LE, X>,
@@ -57,6 +76,10 @@ pub struct LuaminCodegen<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static,
     is_mutable_state: bool,
 }
 
+/// Compiled instructions whose host calls require only shared state access.
+///
+/// The script borrows its host library. Shared list values and host state with
+/// interior mutability may still be modified. Execute with [`crate::luamin_execute`].
 #[derive(Debug, Clone)]
 pub struct LuaminScript<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
     func_lib: &'f FuncLib<SLP, LE, X>,
@@ -66,14 +89,19 @@ pub struct LuaminScript<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, 
 impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
     LuaminScript<'f, SLP, LE, X>
 {
+    /// Returns the host library to which this script is bound.
     pub fn func_lib(&self) -> &FuncLib<SLP, LE, X> {
         self.func_lib
     }
+    /// Returns the generated virtual machine instructions in execution order.
     pub fn ixs(&self) -> &[Ix] {
         &self.ixs
     }
 }
 
+/// Compiled instructions that may call host methods requiring exclusive state access.
+///
+/// The script borrows its host library. Execute with [`crate::luamin_execute_mut`].
 #[derive(Debug, Clone)]
 pub struct LuaminScriptMut<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()>
 {
@@ -84,9 +112,11 @@ pub struct LuaminScriptMut<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'stati
 impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
     LuaminScriptMut<'f, SLP, LE, X>
 {
+    /// Returns the host library to which this script is bound.
     pub fn func_lib(&self) -> &FuncLib<SLP, LE, X> {
         self.func_lib
     }
+    /// Returns the generated virtual machine instructions in execution order.
     pub fn ixs(&self) -> &[Ix] {
         &self.ixs
     }
@@ -122,6 +152,10 @@ impl LoopContext {
 impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
     LuaminCodegen<'f, SLP, LE, X>
 {
+    /// Creates a reusable generator bound to `func_lib`.
+    ///
+    /// `default_list_base_index` identifies the first list element in script indexing;
+    /// a parsed directive can override it for an individual compilation.
     pub fn new(func_lib: &'f FuncLib<SLP, LE, X>, default_list_base_index: i8) -> Self {
         Self {
             func_lib,
@@ -138,8 +172,20 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         }
     }
 
-    /// Generates an immutable script. Returns the script and the indices of
-    /// the used lib functions.
+    /// Generates a script that rejects host functions requiring mutable state.
+    ///
+    /// `intrinsic_param_idents` names leading initial-stack values; the directive's
+    /// parameter list follows them. Both sets of bindings are read-only.
+    /// `directive` also selects the list base index. `stmts` may come from the
+    /// parser or be constructed by the caller.
+    ///
+    /// Returns the script and sorted, unique indices of referenced host functions.
+    /// Each call resets the generator's compilation state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LuaminCodegenError`] for invalid trees, name resolution failures,
+    /// invalid control flow, forbidden mutation, or stack/instruction limits.
     #[allow(clippy::type_complexity)]
     pub fn codegen(
         &mut self,
@@ -158,8 +204,10 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
         ))
     }
 
-    /// Generates a mutable script. Returns the script and the indices of
-    /// the used lib functions.
+    /// Generates a script that permits host functions requiring mutable state.
+    ///
+    /// Parameters, returned indices, and errors follow [`Self::codegen`], except
+    /// mutable host calls are accepted. Execution requires exclusive state access.
     #[allow(clippy::type_complexity)]
     pub fn codegen_mut(
         &mut self,
