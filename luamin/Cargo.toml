@@ -1,16 +1,20 @@
 [package]
 name = "luamin"
 version = "0.1.0"
+description = "An experimental embeddable Lua-like scripting language with a stack-based virtual machine and gas metering"
+documentation = "https://docs.rs/luamin"
+repository = "https://github.com/macaujack/luamin"
+keywords = ["scripting", "interpreter", "lua", "embedded", "vm"]
+categories = ["compilers", "parser-implementations"]
 edition = "2024"
 rust-version = "1.99"
 readme = "../README.md"
 license = "MIT"
-license-file = "../LICENSE"
 
 [dependencies]
 arrayvec = "0.7.8"
 dyn-clone = "1.0.20"
-luamin-macro = { path = "../luamin-macro" }
+luamin-macro = { version = "0.1.0", path = "../luamin-macro" }
 smallvec = "1.15.2"
 smol_str = "0.3.6"
 thiserror = "2.0.18"

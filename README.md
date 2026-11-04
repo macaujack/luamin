@@ -1,5 +1,8 @@
 # Luamin
 
+**Experimental:** Luamin is under active development. Its Rust APIs and script
+language semantics may change incompatibly between releases.
+
 Luamin is an embeddable, Lua-like scripting language for Rust applications.
 Scripts are first compiled into instructions, then executed on a stack-based
 runtime (virtual machine). Compile source once, then run the compiled script

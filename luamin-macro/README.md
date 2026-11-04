@@ -1,5 +1,8 @@
 # luamin-macro
 
+**Experimental:** This crate evolves alongside Luamin. Macro options and generated
+APIs may change incompatibly between releases.
+
 Procedural macros for binding Rust application state and methods to Luamin
 scripts. Requires Rust 1.99 or newer.
 

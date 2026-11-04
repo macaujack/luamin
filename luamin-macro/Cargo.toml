@@ -1,11 +1,15 @@
 [package]
 name = "luamin-macro"
 version = "0.1.0"
+description = "Procedural macros for binding Rust host methods and custom values to the experimental Luamin scripting language"
+documentation = "https://docs.rs/luamin-macro"
+repository = "https://github.com/macaujack/luamin"
+keywords = ["scripting", "luamin", "proc-macro", "bindings"]
+categories = ["development-tools::procedural-macro-helpers"]
 edition = "2024"
 rust-version = "1.99"
 readme = "README.md"
 license = "MIT"
-license-file = "../LICENSE"
 
 [lib]
 proc-macro = true
