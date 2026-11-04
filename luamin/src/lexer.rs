@@ -51,7 +51,14 @@ impl LexError {
 }
 
 pub fn luamin_lex(input: &str) -> Result<(Directive, Vec<Stmt>), LexError> {
-    preflight(input)?;
+    if input.len() > crate::MAX_SOURCE_BYTES {
+        return Err(LexError::new(
+            input,
+            0,
+            LexErrorKind::SourceTooLarge,
+            "Source byte limit exceeded",
+        ));
+    }
     let trimmed = input.trim_start();
     let skipped = input.len() - trimmed.len();
     let (directive, stmts) = parse_program.parse(trimmed).map_err(|e| {
@@ -75,84 +82,6 @@ pub fn luamin_lex(input: &str) -> Result<(Directive, Vec<Stmt>), LexError> {
         ));
     }
     Ok((directive, stmts))
-}
-
-// Bound parser recursion before allocating an AST. Ignore comments and hash
-// strings, so their punctuation cannot accidentally consume a nesting budget.
-fn preflight(input: &str) -> Result<(), LexError> {
-    use crate::limits::{MAX_SOURCE_BYTES, MAX_SYNTAX_DEPTH, MAX_SYNTAX_NODES};
-    if input.len() > MAX_SOURCE_BYTES {
-        return Err(LexError::new(
-            input,
-            0,
-            LexErrorKind::SourceTooLarge,
-            "Source byte limit exceeded",
-        ));
-    }
-    let bytes = input.as_bytes();
-    let (mut i, mut depth, mut tokens) = (0, 0usize, 0);
-    while i < bytes.len() {
-        if bytes[i].is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-        if bytes[i..].starts_with(b"--") {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        let start = i;
-        if bytes[i..].starts_with(b"h\"") {
-            i += 2;
-            while i < bytes.len() {
-                if bytes[i] == b'\\' {
-                    i = (i + 2).min(bytes.len());
-                } else if bytes[i] == b'"' {
-                    i += 1;
-                    break;
-                } else {
-                    i += 1;
-                }
-            }
-        } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
-            i += 1;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            match &input[start..i] {
-                "if" | "do" | "repeat" => depth += 1,
-                "end" | "until" => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-        } else {
-            match bytes[i] {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-            // Advance over a full character so error positions are UTF-8 boundaries.
-            i += input[i..].chars().next().unwrap().len_utf8();
-        }
-        tokens += 1;
-        if depth >= MAX_SYNTAX_DEPTH {
-            return Err(LexError::new(
-                input,
-                start,
-                LexErrorKind::NestingTooDeep,
-                "Syntax nesting limit exceeded",
-            ));
-        }
-        if tokens > MAX_SYNTAX_NODES {
-            return Err(LexError::new(
-                input,
-                start,
-                LexErrorKind::TooManyTokens,
-                "Syntax token limit exceeded",
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn bounded_expression(expr: ValueExpr) -> winnow::ModalResult<ValueExpr> {

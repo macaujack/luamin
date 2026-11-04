@@ -138,6 +138,33 @@ fn parser_limits_reject_deep_or_oversized_source() {
 }
 
 #[test]
+fn syntax_limits_count_nodes_independently_of_literal_width() {
+    use luamin::component::{LiteralExpr, Stmt, ValueExpr};
+
+    for number in [1, 123_456_789] {
+        let source = format!("return {{{}}}", vec![number.to_string(); 2_000].join(","));
+        let (_, stmts) = luamin_lex(&source).unwrap();
+        let [Stmt::Return(exprs)] = stmts.as_slice() else {
+            panic!("Expected a return statement");
+        };
+        let [ValueExpr::LiteralList(values)] = exprs.as_slice() else {
+            panic!("Expected a list literal");
+        };
+        assert_eq!(values.len(), 2_000);
+        assert!(values.iter().all(|value| {
+            matches!(value, ValueExpr::Literal(LiteralExpr::Number(n)) if *n == number)
+        }));
+    }
+
+    // Removing the approximate token limit must retain the actual AST node limit.
+    let source = format!(
+        "return {{{}}}",
+        vec!["1"; luamin::MAX_SYNTAX_NODES].join(",")
+    );
+    assert!(luamin_lex(&source).is_err());
+}
+
+#[test]
 fn list_growth_and_initial_stacks_are_bounded() {
     let source = format!(
         "local list = {{}}; list[{}] = 1; return list",
