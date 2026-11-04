@@ -194,7 +194,7 @@ impl Host {
 fn renamed_dependency_macros_execute() {
     use engine::LuaminExecutor;
     use engine::LuaminValue;
-    let lib = engine::func_lib::FuncLibBuf::new(HostLifetimeProvider::new_func_defs()).unwrap();
+    let lib = engine::func_lib::HostFuncLibBuf::new(HostLifetimeProvider::new_func_defs()).unwrap();
     assert_eq!(HostLifetimeProvider::new_func_def_statics().len(), 2);
     let mut compiler = engine::LuaminCompiler::new(&lib, 1);
     let (script, _) = compiler

@@ -18,7 +18,9 @@ pub use limits::{MAX_INSTRUCTIONS, MAX_SOURCE_BYTES, MAX_SYNTAX_DEPTH, MAX_SYNTA
 pub mod runtime;
 
 pub use convert::{FromLuamin, ToLuamin};
-pub use func_lib::{DuplicateFunctionError, FuncDef, FuncDefStatic, FuncLibArray, FuncLibBuf};
+pub use func_lib::{
+    DuplicateFunctionError, HostFuncDef, HostFuncDefStatic, HostFuncLibArray, HostFuncLibBuf,
+};
 pub use luamin_macro::{LuaminExecutor, gen_luamin_func};
 pub use smallvec;
 pub use smol_str;
@@ -28,7 +30,7 @@ use xxhash_rust::{const_xxh3, xxh3};
 
 pub use crate::{
     codegen::{LuaminCodegen, LuaminCodegenError, LuaminScript, LuaminScriptMut},
-    func_lib::{FuncLib, FuncPointerStateLifetimeProvider, GasError},
+    func_lib::{FuncPointerStateLifetimeProvider, GasError, HostFuncLib},
     lexer::{LexError, LexErrorKind, luamin_lex},
     runtime::{
         LuaminGas, LuaminRuntimeError, LuaminUserValue, LuaminValue, luamin_execute,
@@ -67,7 +69,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
     ///
     /// `default_list_base_index` is the script index corresponding to the first
     /// list element, unless overridden by the source list-base directive.
-    pub fn new(func_lib: &'f FuncLib<SLP, LE, X>, default_list_base_index: i8) -> Self {
+    pub fn new(func_lib: &'f HostFuncLib<SLP, LE, X>, default_list_base_index: i8) -> Self {
         Self {
             codegen: LuaminCodegen::new(func_lib, default_list_base_index),
         }

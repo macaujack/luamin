@@ -1,5 +1,5 @@
 use crate::{
-    func_lib::{FuncDef, FuncLibBuf, FuncPointer, GasError, consume_gas},
+    func_lib::{FuncPointer, GasError, HostFuncDef, HostFuncLibBuf, consume_gas},
     lexer::luamin_lex,
     runtime::{LuaminGas, LuaminValue},
 };
@@ -33,12 +33,12 @@ impl State {
 }
 
 fn get_codegen() -> LuaminCodegen<'static, StateLifetimeProvider, StateError> {
-    let func_lib = FuncLibBuf::new([
-        FuncDef::new(
+    let func_lib = HostFuncLibBuf::new([
+        HostFuncDef::new(
             "get_score",
             FuncPointer::<StateLifetimeProvider, StateError>::F01(State::get_score),
         ),
-        FuncDef::new(
+        HostFuncDef::new(
             "inc_score",
             FuncPointer::<StateLifetimeProvider, StateError>::F00Mut(State::inc_score),
         ),

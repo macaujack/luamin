@@ -9,7 +9,7 @@ mod private {
     /// Storage wrapper underlying fixed-size and borrowed function libraries.
     #[derive(Debug)]
     #[repr(transparent)]
-    pub struct FuncLibHelper<T: ?Sized> {
+    pub struct HostFuncLibHelper<T: ?Sized> {
         pub(crate) func_defs: T,
     }
 }
@@ -18,32 +18,32 @@ mod private {
 ///
 /// `N` is the number of definitions, `SLP` supplies host state lifetimes,
 /// `LE` is the host error type, and `X` is per-function metadata.
-/// Coerces to [`FuncLib`] for compilation and execution.
-pub type FuncLibArray<const N: usize, SLP, LE, X = ()> =
-    private::FuncLibHelper<[FuncDef<SLP, LE, X>; N]>;
+/// Coerces to [`HostFuncLib`] for compilation and execution.
+pub type HostFuncLibArray<const N: usize, SLP, LE, X = ()> =
+    private::HostFuncLibHelper<[HostFuncDef<SLP, LE, X>; N]>;
 /// Borrowed view of a name-sorted host function library.
 ///
 /// Function indices refer to sorted positions, not the original input order.
 /// `SLP` supplies host state lifetimes, `LE` is the host error type, and
 /// `X` is metadata carried without interpretation by the compiler/runtime.
-pub type FuncLib<SLP, LE, X = ()> = private::FuncLibHelper<[FuncDef<SLP, LE, X>]>;
+pub type HostFuncLib<SLP, LE, X = ()> = private::HostFuncLibHelper<[HostFuncDef<SLP, LE, X>]>;
 
 /// Heap-allocated, name-sorted library built from an iterator of definitions.
 ///
-/// Dereferences to [`FuncLib`]. Construction rejects duplicate names.
-/// `SLP`, `LE`, and `X` have the same roles as in [`FuncLib`].
+/// Dereferences to [`HostFuncLib`]. Construction rejects duplicate names.
+/// `SLP`, `LE`, and `X` have the same roles as in [`HostFuncLib`].
 #[derive(Debug)]
-pub struct FuncLibBuf<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
-    func_defs: Box<[FuncDef<SLP, LE, X>]>,
+pub struct HostFuncLibBuf<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
+    func_defs: Box<[HostFuncDef<SLP, LE, X>]>,
 }
 
 impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> Deref
-    for FuncLibBuf<SLP, LE, X>
+    for HostFuncLibBuf<SLP, LE, X>
 {
-    type Target = FuncLib<SLP, LE, X>;
+    type Target = HostFuncLib<SLP, LE, X>;
 
     fn deref(&self) -> &Self::Target {
-        // SAFETY: FuncLibHelper is repr(transparent) over the same slice type,
+        // SAFETY: HostFuncLibHelper is repr(transparent) over the same slice type,
         // and the returned reference retains the slice metadata and self lifetime.
         unsafe { &*(self.func_defs.as_ref() as *const _ as *const Self::Target) }
     }
@@ -52,7 +52,7 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> Deref
 /// Named host function and application metadata.
 ///
 /// `SLP` supplies state lifetimes, `LE` is the host error type, and `X` is metadata.
-pub struct FuncDef<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
+pub struct HostFuncDef<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
     /// Name used to resolve calls from script source.
     pub func_name: SmolStr,
     /// Dispatch pointer describing the host function signature and mutability.
@@ -61,7 +61,8 @@ pub struct FuncDef<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'stati
     pub extra: X,
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> Clone for FuncDef<SLP, LE, X>
+impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> Clone
+    for HostFuncDef<SLP, LE, X>
 where
     X: Clone,
 {
@@ -75,10 +76,10 @@ where
 }
 
 impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: std::fmt::Debug + 'static>
-    std::fmt::Debug for FuncDef<SLP, LE, X>
+    std::fmt::Debug for HostFuncDef<SLP, LE, X>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FuncDef")
+        f.debug_struct("HostFuncDef")
             .field("func_name", &self.func_name)
             .field("func_pointer", &self.func_pointer)
             .field("extra", &self.extra)
@@ -86,10 +87,10 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: std::fmt::Debug + 's
     }
 }
 
-/// Host function definition with a static name, used by `FuncLibArray::new_const`.
+/// Host function definition with a static name, used by `HostFuncLibArray::new_const`.
 ///
-/// The generic parameters have the same meaning as in [`FuncDef`].
-pub struct FuncDefStatic<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
+/// The generic parameters have the same meaning as in [`HostFuncDef`].
+pub struct HostFuncDefStatic<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
     /// Name used to resolve calls from script source.
     pub func_name: &'static str,
     /// Dispatch pointer describing the host function signature and mutability.
@@ -99,10 +100,10 @@ pub struct FuncDefStatic<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 
 }
 
 impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: std::fmt::Debug + 'static>
-    std::fmt::Debug for FuncDefStatic<SLP, LE, X>
+    std::fmt::Debug for HostFuncDefStatic<SLP, LE, X>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FuncDefStatic")
+        f.debug_struct("HostFuncDefStatic")
             .field("func_name", &self.func_name)
             .field("func_pointer", &self.func_pointer)
             .field("extra", &self.extra)
@@ -111,7 +112,7 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: std::fmt::Debug + 's
 }
 
 impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: Clone + 'static> Clone
-    for FuncDefStatic<SLP, LE, X>
+    for HostFuncDefStatic<SLP, LE, X>
 {
     fn clone(&self) -> Self {
         Self {
@@ -249,18 +250,18 @@ pub struct DuplicateFunctionError {
     pub name: SmolStr,
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> FuncLibBuf<SLP, LE, X> {
+impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> HostFuncLibBuf<SLP, LE, X> {
     /// Collects definitions and sorts them lexicographically by name.
     ///
     /// # Errors
     ///
     /// Returns [`DuplicateFunctionError`] if any names are repeated.
-    pub fn new<I>(func_defs: I) -> Result<FuncLibBuf<SLP, LE, X>, DuplicateFunctionError>
+    pub fn new<I>(func_defs: I) -> Result<HostFuncLibBuf<SLP, LE, X>, DuplicateFunctionError>
     where
-        I: IntoIterator<Item = FuncDef<SLP, LE, X>>,
+        I: IntoIterator<Item = HostFuncDef<SLP, LE, X>>,
     {
-        let func_defs: Vec<FuncDef<SLP, LE, X>> = func_defs.into_iter().collect();
-        let mut func_defs: Box<[FuncDef<SLP, LE, X>]> = func_defs.into();
+        let func_defs: Vec<HostFuncDef<SLP, LE, X>> = func_defs.into_iter().collect();
+        let mut func_defs: Box<[HostFuncDef<SLP, LE, X>]> = func_defs.into();
         func_defs.sort_by(|a, b| a.func_name.cmp(&b.func_name));
 
         for i in 1..func_defs.len() {
@@ -276,7 +277,7 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> FuncLibBuf<
 }
 
 impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
-    FuncLibArray<N, SLP, LE, X>
+    HostFuncLibArray<N, SLP, LE, X>
 {
     /// Constructs a fixed-size library, sorting definitions by name.
     ///
@@ -286,7 +287,7 @@ impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'sta
     /// # Panics
     ///
     /// Panics if two definitions have the same function name.
-    pub const fn new_const(func_def_statics: [FuncDefStatic<SLP, LE, X>; N]) -> Self {
+    pub const fn new_const(func_def_statics: [HostFuncDefStatic<SLP, LE, X>; N]) -> Self {
         const fn str_gt(a: &str, b: &str) -> bool {
             let a_bytes = a.as_bytes();
             let b_bytes = b.as_bytes();
@@ -330,7 +331,7 @@ impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'sta
 
         assert!(
             !std::mem::needs_drop::<X>(),
-            "FuncDef extra type must not implement Drop"
+            "HostFuncDef extra type must not implement Drop"
         );
 
         let mut func_def_statics = func_def_statics;
@@ -373,7 +374,7 @@ impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'sta
                 let func_pointer = std::ptr::addr_of!((*func_def_static).func_pointer);
                 let extra = std::ptr::addr_of!((*func_def_static).extra);
 
-                func_defs[i].write(FuncDef {
+                func_defs[i].write(HostFuncDef {
                     func_name: SmolStr::new_static(func_name.read()),
                     func_pointer: func_pointer.read(),
                     extra: extra.read(),
@@ -386,18 +387,18 @@ impl<const N: usize, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'sta
         // SAFETY: all N elements have been initialized; MaybeUninit<T> has
         // the layout of T, and the source storage does not drop its contents.
         unsafe {
-            let func_defs = &func_defs as *const _ as *const [FuncDef<SLP, LE, X>; N];
+            let func_defs = &func_defs as *const _ as *const [HostFuncDef<SLP, LE, X>; N];
             let func_defs = func_defs.read();
             Self { func_defs }
         }
     }
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> FuncLib<SLP, LE, X> {
+impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> HostFuncLib<SLP, LE, X> {
     /// Looks up a function by name, returning its sorted index and definition.
     ///
     /// Returns `None` when the name is absent.
-    pub fn get_func_def(&self, func_name: &str) -> Option<(usize, &FuncDef<SLP, LE, X>)> {
+    pub fn get_func_def(&self, func_name: &str) -> Option<(usize, &HostFuncDef<SLP, LE, X>)> {
         let index = self
             .func_defs
             .binary_search_by(|func_def| func_def.func_name.as_str().cmp(func_name))
@@ -406,12 +407,12 @@ impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> FuncLib<SLP
     }
 
     /// Returns the definition at the zero-based sorted index, or `None` if out of bounds.
-    pub fn kth_func_def(&self, kth: usize) -> Option<&FuncDef<SLP, LE, X>> {
+    pub fn kth_func_def(&self, kth: usize) -> Option<&HostFuncDef<SLP, LE, X>> {
         self.func_defs.get(kth)
     }
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> FuncDef<SLP, LE, X>
+impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> HostFuncDef<SLP, LE, X>
 where
     X: Default,
 {
@@ -428,7 +429,7 @@ where
     }
 }
 
-impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> FuncDef<SLP, LE, X> {
+impl<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static> HostFuncDef<SLP, LE, X> {
     /// Creates a named definition with explicit application metadata.
     pub fn new_with_extra<FN>(func_name: FN, func_pointer: FuncPointer<SLP, LE>, extra: X) -> Self
     where

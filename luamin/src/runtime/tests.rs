@@ -3,7 +3,7 @@ use smallvec::smallvec;
 
 use crate::{
     codegen::LuaminCodegen,
-    func_lib::{FuncDef, FuncLibBuf, FuncPointer, consume_gas},
+    func_lib::{FuncPointer, HostFuncDef, HostFuncLibBuf, consume_gas},
     lexer::luamin_lex,
 };
 
@@ -109,16 +109,16 @@ impl State {
     }
 }
 
-fn get_func_lib() -> &'static FuncLib<StateLifetimeProvider, TestError> {
+fn get_func_lib() -> &'static HostFuncLib<StateLifetimeProvider, TestError> {
     type FP = FuncPointer<StateLifetimeProvider, TestError>;
-    let func_lib = FuncLibBuf::new([
-        FuncDef::new("get_score", FP::F01(State::get_score)),
-        FuncDef::new("add_score", FP::F10Mut(State::add_score)),
-        FuncDef::new("sub_score", FP::F10Mut(State::sub_score)),
-        FuncDef::new("mul_score", FP::F10Mut(State::mul_score)),
-        FuncDef::new("div_score", FP::F10Mut(State::div_score)),
-        FuncDef::new("list_score0", FP::F01(State::list_score0)),
-        FuncDef::new("list_score1", FP::F02(State::list_score1)),
+    let func_lib = HostFuncLibBuf::new([
+        HostFuncDef::new("get_score", FP::F01(State::get_score)),
+        HostFuncDef::new("add_score", FP::F10Mut(State::add_score)),
+        HostFuncDef::new("sub_score", FP::F10Mut(State::sub_score)),
+        HostFuncDef::new("mul_score", FP::F10Mut(State::mul_score)),
+        HostFuncDef::new("div_score", FP::F10Mut(State::div_score)),
+        HostFuncDef::new("list_score0", FP::F01(State::list_score0)),
+        HostFuncDef::new("list_score1", FP::F02(State::list_score1)),
     ])
     .unwrap();
 

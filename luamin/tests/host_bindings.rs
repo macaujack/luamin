@@ -1,7 +1,7 @@
 use std::{assert_matches, cell::RefCell, rc::Rc};
 
 use luamin::{
-    func_lib::{FuncLibArray, FuncLibBuf, consume_gas},
+    func_lib::{HostFuncLibArray, HostFuncLibBuf, consume_gas},
     runtime::{CloneGasCost, LuaminUserValue, PartialEqGasCost},
 };
 
@@ -137,15 +137,15 @@ fn new_incorrect_type_error(func_name: &'static str, arg_index: usize) -> StateE
 }
 
 fn get_compiler() -> LuaminCompiler<'static, StateLifetimeProvider<()>, StateError, FuncDefExtra> {
-    static FUNC_LIB: &FuncLib<StateLifetimeProvider<()>, StateError, FuncDefExtra> =
-        &FuncLibArray::new_const(StateLifetimeProvider::<()>::new_func_def_statics());
+    static FUNC_LIB: &HostFuncLib<StateLifetimeProvider<()>, StateError, FuncDefExtra> =
+        &HostFuncLibArray::new_const(StateLifetimeProvider::<()>::new_func_def_statics());
 
     LuaminCompiler::new(FUNC_LIB, 1)
 }
 
 #[test]
 fn test_func_lib() {
-    let func_lib = FuncLibBuf::new(StateLifetimeProvider::<()>::new_func_defs()).unwrap();
+    let func_lib = HostFuncLibBuf::new(StateLifetimeProvider::<()>::new_func_defs()).unwrap();
     let (_, func_def) = func_lib.get_func_def("add_score").unwrap();
     assert_eq!(func_def.extra.precedence, 200);
 }

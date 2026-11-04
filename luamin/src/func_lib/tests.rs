@@ -2,26 +2,26 @@ use super::*;
 
 #[test]
 fn const_library_supports_empty_arrays() {
-    let lib = FuncLibArray::<0, StateLifetimeProvider, TestError>::new_const([]);
-    let lib: &FuncLib<StateLifetimeProvider, TestError> = &lib;
+    let lib = HostFuncLibArray::<0, StateLifetimeProvider, TestError>::new_const([]);
+    let lib: &HostFuncLib<StateLifetimeProvider, TestError> = &lib;
     assert!(lib.get_func_def("missing").is_none());
 }
 
 #[test]
 fn const_library_sorts_and_preserves_extra_values() {
-    let lib = FuncLibArray::new_const([
-        FuncDefStatic {
+    let lib = HostFuncLibArray::new_const([
+        HostFuncDefStatic {
             func_name: "z",
             func_pointer: FuncPointer::<StateLifetimeProvider, TestError>::F00Mut(f00_mut),
             extra: 42_u32,
         },
-        FuncDefStatic {
+        HostFuncDefStatic {
             func_name: "a",
             func_pointer: FuncPointer::<StateLifetimeProvider, TestError>::F00Mut(f00_mut),
             extra: 7_u32,
         },
     ]);
-    let lib: &FuncLib<StateLifetimeProvider, TestError, u32> = &lib;
+    let lib: &HostFuncLib<StateLifetimeProvider, TestError, u32> = &lib;
     assert_eq!(lib.get_func_def("a").unwrap().0, 0);
     assert_eq!(lib.get_func_def("z").unwrap().1.extra, 42);
 }
@@ -29,13 +29,13 @@ fn const_library_sorts_and_preserves_extra_values() {
 #[test]
 #[should_panic(expected = "Duplicated function name")]
 fn const_library_rejects_duplicate_names() {
-    let _ = FuncLibArray::new_const([
-        FuncDefStatic {
+    let _ = HostFuncLibArray::new_const([
+        HostFuncDefStatic {
             func_name: "same",
             func_pointer: FuncPointer::<StateLifetimeProvider, TestError>::F00Mut(f00_mut),
             extra: (),
         },
-        FuncDefStatic {
+        HostFuncDefStatic {
             func_name: "same",
             func_pointer: FuncPointer::<StateLifetimeProvider, TestError>::F00Mut(f00_mut),
             extra: (),
@@ -100,23 +100,23 @@ fn f22_mut(
 #[test]
 fn test_func_lib() {
     let mut func_defs = [
-        FuncDef::<StateLifetimeProvider, TestError, FuncDefExtra>::new_with_extra(
+        HostFuncDef::<StateLifetimeProvider, TestError, FuncDefExtra>::new_with_extra(
             "f00_mut",
             FuncPointer::<StateLifetimeProvider, TestError>::F00Mut(f00_mut),
             FuncDefExtra { extra: 0 },
         ),
-        FuncDef::new_with_extra(
+        HostFuncDef::new_with_extra(
             "f22_mut",
             FuncPointer::<StateLifetimeProvider, TestError>::F22Mut(f22_mut),
             FuncDefExtra { extra: 2 },
         ),
-        FuncDef::new_with_extra(
+        HostFuncDef::new_with_extra(
             "f11",
             FuncPointer::<StateLifetimeProvider, TestError>::F11(f11),
             FuncDefExtra { extra: 1 },
         ),
     ];
-    let func_lib = FuncLibBuf::new(func_defs.clone()).unwrap();
+    let func_lib = HostFuncLibBuf::new(func_defs.clone()).unwrap();
     let (_, func_def) = func_lib.get_func_def("f00_mut").unwrap();
     assert_eq!(func_def.func_name, "f00_mut");
     assert_eq!(func_def.extra.extra, 0);
@@ -129,5 +129,5 @@ fn test_func_lib() {
     assert!(func_lib.get_func_def("some_random_function_name").is_none());
 
     func_defs[0].func_name = SmolStr::new("f11");
-    assert!(FuncLibBuf::new(func_defs).is_err());
+    assert!(HostFuncLibBuf::new(func_defs).is_err());
 }

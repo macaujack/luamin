@@ -9,7 +9,7 @@ use crate::{
         ValueExpr::{self},
         WhileStmt,
     },
-    func_lib::{FuncLib, FuncPointerStateLifetimeProvider},
+    func_lib::{FuncPointerStateLifetimeProvider, HostFuncLib},
     hash_string,
 };
 
@@ -64,7 +64,7 @@ pub enum LuaminCodegenError {
 /// is per-function metadata. Generated scripts borrow the library for `'f`.
 #[derive(Debug, Clone)]
 pub struct LuaminCodegen<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
-    func_lib: &'f FuncLib<SLP, LE, X>,
+    func_lib: &'f HostFuncLib<SLP, LE, X>,
     default_list_base_index: i8,
     declared_idents: SmallVec<[DeclaredIdent; 10]>,
     list_base_index: i8,
@@ -82,7 +82,7 @@ pub struct LuaminCodegen<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static,
 /// interior mutability may still be modified. Execute with [`crate::luamin_execute`].
 #[derive(Debug, Clone)]
 pub struct LuaminScript<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()> {
-    func_lib: &'f FuncLib<SLP, LE, X>,
+    func_lib: &'f HostFuncLib<SLP, LE, X>,
     ixs: Box<[Ix]>,
 }
 
@@ -90,7 +90,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
     LuaminScript<'f, SLP, LE, X>
 {
     /// Returns the host library to which this script is bound.
-    pub fn func_lib(&self) -> &FuncLib<SLP, LE, X> {
+    pub fn func_lib(&self) -> &HostFuncLib<SLP, LE, X> {
         self.func_lib
     }
     /// Returns the generated virtual machine instructions in execution order.
@@ -105,7 +105,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
 #[derive(Debug, Clone)]
 pub struct LuaminScriptMut<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static = ()>
 {
-    func_lib: &'f FuncLib<SLP, LE, X>,
+    func_lib: &'f HostFuncLib<SLP, LE, X>,
     ixs: Box<[Ix]>,
 }
 
@@ -113,7 +113,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
     LuaminScriptMut<'f, SLP, LE, X>
 {
     /// Returns the host library to which this script is bound.
-    pub fn func_lib(&self) -> &FuncLib<SLP, LE, X> {
+    pub fn func_lib(&self) -> &HostFuncLib<SLP, LE, X> {
         self.func_lib
     }
     /// Returns the generated virtual machine instructions in execution order.
@@ -156,7 +156,7 @@ impl<'f, SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static>
     ///
     /// `default_list_base_index` identifies the first list element in script indexing;
     /// a parsed directive can override it for an individual compilation.
-    pub fn new(func_lib: &'f FuncLib<SLP, LE, X>, default_list_base_index: i8) -> Self {
+    pub fn new(func_lib: &'f HostFuncLib<SLP, LE, X>, default_list_base_index: i8) -> Self {
         Self {
             func_lib,
             default_list_base_index,

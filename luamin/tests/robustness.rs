@@ -3,7 +3,7 @@ use std::{cell::RefCell, error::Error as _, rc::Rc};
 use luamin::{
     LexErrorKind, LuaminCompiler, LuaminExecutor, LuaminGas, LuaminRuntimeError, LuaminValue,
     MAX_SOURCE_BYTES, MAX_SYNTAX_DEPTH,
-    func_lib::{FuncLibArray, GasError},
+    func_lib::{GasError, HostFuncLibArray},
     lexer::luamin_lex,
     runtime::MAX_LIST_LEN,
 };
@@ -25,7 +25,7 @@ fn run(
     source: &str,
     gas: &mut LuaminGas,
 ) -> Result<Vec<LuaminValue>, GasError<LuaminRuntimeError<HostError>>> {
-    let lib = FuncLibArray::new_const(StateLifetimeProvider::new_func_def_statics());
+    let lib = HostFuncLibArray::new_const(StateLifetimeProvider::new_func_def_statics());
     let (script, _) = LuaminCompiler::new(&lib, 1).compile(&[], source).unwrap();
     State
         .execute_luamin_script(gas, &script, &[])
@@ -174,7 +174,7 @@ fn list_growth_and_initial_stacks_are_bounded() {
         run(&source, &mut LuaminGas::new(i32::MAX)),
         Err(GasError::Other(LuaminRuntimeError::ListTooLarge))
     ));
-    let lib = FuncLibArray::new_const(StateLifetimeProvider::new_func_def_statics());
+    let lib = HostFuncLibArray::new_const(StateLifetimeProvider::new_func_def_statics());
     let (script, _) = LuaminCompiler::new(&lib, 1)
         .compile(&[], "return 1")
         .unwrap();
@@ -204,7 +204,7 @@ fn integer_arithmetic_wraps_consistently_and_division_is_floored() {
 
 #[test]
 fn compiler_can_be_reused_after_parse_and_codegen_errors() {
-    let lib = FuncLibArray::new_const(StateLifetimeProvider::new_func_def_statics());
+    let lib = HostFuncLibArray::new_const(StateLifetimeProvider::new_func_def_statics());
     let mut compiler = LuaminCompiler::new(&lib, 1);
     assert!(compiler.compile(&[], "local =").is_err());
     assert!(compiler.compile(&[], "return unknown").is_err());

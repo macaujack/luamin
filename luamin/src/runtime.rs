@@ -9,7 +9,7 @@ use crate::{
     codegen::{LuaminScript, LuaminScriptMut},
     component::Ix,
     func_lib::{
-        FuncDef, FuncLib, FuncPointerCallError, FuncPointerStateLifetimeProvider, GasError,
+        FuncPointerCallError, FuncPointerStateLifetimeProvider, GasError, HostFuncDef, HostFuncLib,
     },
 };
 
@@ -418,7 +418,7 @@ pub fn luamin_execute<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'st
     let call_fn = move |state: &mut &SLP::StateWithLifetimes<'_, '_, '_, '_>,
                         gas: &mut LuaminGas,
                         stack: &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
-                        func_def: &FuncDef<SLP, LE, X>| {
+                        func_def: &HostFuncDef<SLP, LE, X>| {
         func_def.func_pointer.call(state, gas, stack)
     };
 
@@ -450,7 +450,7 @@ pub fn luamin_execute_mut<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X:
     let call_fn = |state: &mut &mut SLP::StateWithLifetimes<'_, '_, '_, '_>,
                    gas: &mut LuaminGas,
                    stack: &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
-                   func_def: &FuncDef<SLP, LE, X>| {
+                   func_def: &HostFuncDef<SLP, LE, X>| {
         func_def.func_pointer.call_mut(state, gas, stack)
     };
 
@@ -467,7 +467,7 @@ pub fn luamin_execute_mut<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X:
 fn execute_aux<SLP: FuncPointerStateLifetimeProvider, LE: 'static, X: 'static, RS, F>(
     state: &mut RS,
     gas: &mut LuaminGas,
-    func_lib: &FuncLib<SLP, LE, X>,
+    func_lib: &HostFuncLib<SLP, LE, X>,
     ixs: &[Ix],
     initial_stack: &[LuaminValue],
     mut call_fn: F,
@@ -480,7 +480,7 @@ where
         &mut RS,
         &mut LuaminGas,
         &mut SmallVec<[LuaminValue; LIKELY_STACK_CAP]>,
-        &FuncDef<SLP, LE, X>,
+        &HostFuncDef<SLP, LE, X>,
     ) -> Result<(), GasError<FuncPointerCallError<LE>>>,
 {
     use Ix::*;

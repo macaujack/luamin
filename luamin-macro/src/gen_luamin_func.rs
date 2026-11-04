@@ -271,7 +271,7 @@ pub fn gen_luamin_func(
             /// Returns registered function definitions in method declaration order.
             ///
             /// Construct a function library to sort these definitions and reject duplicate names.
-            pub #conditional_const_token fn new_func_defs() -> [#runtime::func_lib::FuncDef<Self, #error_type, #func_def_extra_type>; #func_def_count] {
+            pub #conditional_const_token fn new_func_defs() -> [#runtime::func_lib::HostFuncDef<Self, #error_type, #func_def_extra_type>; #func_def_count] {
                 [
                     #(#func_def_array),*
                 ]
@@ -279,7 +279,7 @@ pub fn gen_luamin_func(
             /// Returns definitions with static names in method declaration order.
             ///
             /// These can be passed to the fixed-size library constructor.
-            pub #conditional_const_token fn new_func_def_statics() -> [#runtime::func_lib::FuncDefStatic<Self, #error_type, #func_def_extra_type>; #func_def_count] {
+            pub #conditional_const_token fn new_func_def_statics() -> [#runtime::func_lib::HostFuncDefStatic<Self, #error_type, #func_def_extra_type>; #func_def_count] {
                 [
                     #(#func_def_static_array),*
                 ]
@@ -544,14 +544,14 @@ fn handle_impl_fn(
     };
     Ok(HandleImplFnResult {
         func_def_array_element: quote! {
-            #(#cfg)* #runtime::func_lib::FuncDef {
+            #(#cfg)* #runtime::func_lib::HostFuncDef {
                 func_name: #runtime::smol_str::SmolStr::new_static(#name),
                 func_pointer: #runtime::func_lib::FuncPointer::<Self, #error_type>::#variant(Self::#wrapper),
                 extra: #extra,
             }
         },
         func_def_static_array_element: quote! {
-            #(#cfg)* #runtime::func_lib::FuncDefStatic {
+            #(#cfg)* #runtime::func_lib::HostFuncDefStatic {
                 func_name: #name,
                 func_pointer: #runtime::func_lib::FuncPointer::<Self, #error_type>::#variant(Self::#wrapper),
                 extra: #extra,
