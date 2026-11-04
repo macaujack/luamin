@@ -198,6 +198,11 @@ cargo run -p luamin --example host_functions
 
 See the [API reference](https://docs.rs/luamin) for individual types and methods.
 
+## Benchmarks
+
+See [script-bench-rs-luamin](https://github.com/macaujack/script-bench-rs-luamin)
+for benchmarks.
+
 ## License
 
 Luamin and its procedural macros are licensed under the MIT License.
