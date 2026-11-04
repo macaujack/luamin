@@ -3,7 +3,7 @@ use smallvec::smallvec;
 
 use crate::{
     codegen::LuaminCodegen,
-    func_lib::{FuncPointer, HostFuncDef, HostFuncLibBuf, consume_gas},
+    func_lib::{FuncPointer, HostFuncDef, HostFuncLibBuf},
     lexer::luamin_lex,
 };
 
@@ -30,7 +30,7 @@ enum TestError {
 
 impl State {
     fn get_score(&self, gas: &mut LuaminGas) -> Result<LuaminValue, GasError<TestError>> {
-        consume_gas!(gas, 1);
+        gas.try_consume(1)?;
         Ok(LuaminValue::Number(self.score))
     }
     fn add_score(
@@ -38,7 +38,7 @@ impl State {
         gas: &mut LuaminGas,
         amount: LuaminValue,
     ) -> Result<(), GasError<TestError>> {
-        consume_gas!(gas, 1);
+        gas.try_consume(1)?;
         let amount = match amount {
             LuaminValue::Number(amount) => amount,
             _ => return Err(GasError::Other(TestError::IncorrectType)),
@@ -51,7 +51,7 @@ impl State {
         gas: &mut LuaminGas,
         amount: LuaminValue,
     ) -> Result<(), GasError<TestError>> {
-        consume_gas!(gas, 1);
+        gas.try_consume(1)?;
         let amount = match amount {
             LuaminValue::Number(amount) => amount,
             _ => return Err(GasError::Other(TestError::IncorrectType)),
@@ -64,7 +64,7 @@ impl State {
         gas: &mut LuaminGas,
         amount: LuaminValue,
     ) -> Result<(), GasError<TestError>> {
-        consume_gas!(gas, 1);
+        gas.try_consume(1)?;
         let amount = match amount {
             LuaminValue::Number(amount) => amount,
             _ => return Err(GasError::Other(TestError::IncorrectType)),
@@ -77,7 +77,7 @@ impl State {
         gas: &mut LuaminGas,
         amount: LuaminValue,
     ) -> Result<(), GasError<TestError>> {
-        consume_gas!(gas, 1);
+        gas.try_consume(1)?;
         let amount = match amount {
             LuaminValue::Number(amount) => amount,
             _ => return Err(GasError::Other(TestError::IncorrectType)),
@@ -89,7 +89,7 @@ impl State {
         Ok(())
     }
     fn list_score0(&self, gas: &mut LuaminGas) -> Result<LuaminValue, GasError<TestError>> {
-        consume_gas!(gas, 1);
+        gas.try_consume(1)?;
         let list = vec![
             LuaminValue::Number(self.score),
             LuaminValue::Number(self.score),
@@ -100,7 +100,7 @@ impl State {
         &self,
         gas: &mut LuaminGas,
     ) -> Result<(LuaminValue, LuaminValue), GasError<TestError>> {
-        consume_gas!(gas, 1);
+        gas.try_consume(1)?;
         let list = vec![LuaminValue::Number(self.score), LuaminValue::Nil];
         Ok((
             LuaminValue::List(Rc::new(RefCell::new(list))),

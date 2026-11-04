@@ -172,6 +172,21 @@ impl LuaminGas {
     ///
     /// Has the same sticky exhaustion behavior as [`Self::consume`]. The generic
     /// `E` allows the error to be used directly in the caller's result type.
+    ///
+    /// Use `?` to stop work immediately when a charge fails.
+    ///
+    /// ```rust
+    /// use luamin::{GasError, LuaminGas};
+    /// fn charge(gas: &mut LuaminGas) -> Result<(), GasError<()>> {
+    ///     gas.try_consume(2)?;
+    ///     Ok(())
+    /// }
+    /// assert!(charge(&mut LuaminGas::new(2)).is_ok());
+    /// assert!(matches!(
+    ///     charge(&mut LuaminGas::new(1)),
+    ///     Err(GasError::GasExceeded)
+    /// ));
+    /// ```
     pub const fn try_consume<E>(&mut self, gas_cost: i32) -> Result<(), GasError<E>> {
         if self.consume(gas_cost) {
             Err(GasError::GasExceeded)

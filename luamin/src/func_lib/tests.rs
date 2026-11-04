@@ -64,13 +64,13 @@ enum TestError {
 }
 
 fn f00_mut(s: &mut State, gas: &mut LuaminGas) -> Result<(), GasError<TestError>> {
-    consume_gas!(gas, 1);
+    gas.try_consume(1)?;
     s.score += 1;
     Ok(())
 }
 
 fn f11(s: &State, gas: &mut LuaminGas, a: LuaminValue) -> Result<LuaminValue, GasError<TestError>> {
-    consume_gas!(gas, 1);
+    gas.try_consume(1)?;
     let a = match a {
         LuaminValue::Number(a) => a,
         _ => return Err(GasError::Other(TestError::TestError)),
@@ -84,7 +84,7 @@ fn f22_mut(
     a: LuaminValue,
     b: LuaminValue,
 ) -> Result<(LuaminValue, LuaminValue), GasError<TestError>> {
-    consume_gas!(gas, 1);
+    gas.try_consume(1)?;
     let a = match a {
         LuaminValue::Number(a) => a,
         _ => panic!(),

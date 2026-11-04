@@ -3,7 +3,7 @@
 
 use luamin::{
     GasError, HostFuncLibBuf, LuaminCompiler, LuaminExecutor, LuaminGas, LuaminValue,
-    func_lib::consume_gas, gen_luamin_func,
+    gen_luamin_func,
 };
 
 #[derive(LuaminExecutor)]
@@ -41,7 +41,7 @@ impl Host {
         }
         let mut total = 0;
         for value in 1..=n {
-            consume_gas!(gas, 1);
+            gas.try_consume(1)?;
             total += value;
         }
         Ok(total)

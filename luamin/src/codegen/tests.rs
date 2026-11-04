@@ -1,5 +1,5 @@
 use crate::{
-    func_lib::{FuncPointer, GasError, HostFuncDef, HostFuncLibBuf, consume_gas},
+    func_lib::{FuncPointer, GasError, HostFuncDef, HostFuncLibBuf},
     lexer::luamin_lex,
     runtime::{LuaminGas, LuaminValue},
 };
@@ -22,11 +22,11 @@ enum StateError {}
 
 impl State {
     fn get_score(&self, gas: &mut LuaminGas) -> Result<LuaminValue, GasError<StateError>> {
-        consume_gas!(gas, 1);
+        gas.try_consume(1)?;
         Ok(LuaminValue::Number(self.score))
     }
     fn inc_score(&mut self, gas: &mut LuaminGas) -> Result<(), GasError<StateError>> {
-        consume_gas!(gas, 1);
+        gas.try_consume(1)?;
         self.score += 1;
         Ok(())
     }

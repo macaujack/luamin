@@ -1,7 +1,7 @@
 use std::{assert_matches, cell::RefCell, rc::Rc};
 
 use luamin::{
-    func_lib::{HostFuncLibArray, HostFuncLibBuf, consume_gas},
+    func_lib::{HostFuncLibArray, HostFuncLibBuf},
     runtime::{CloneGasCost, LuaminUserValue, PartialEqGasCost},
 };
 
@@ -113,7 +113,7 @@ impl<T> State<T> {
         &self,
         gas: &mut LuaminGas,
     ) -> Result<&PlayerInfo, GasError<StateError>> {
-        consume_gas!(gas, 3);
+        gas.try_consume(3)?;
         Ok(&self.player_info)
     }
 

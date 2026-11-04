@@ -47,7 +47,7 @@ impl Host {
     }
 
     fn manually_metered(&self, gas: &mut LuaminGas) -> Result<i32, GasError<Error>> {
-        engine::func_lib::consume_gas!(gas, 2);
+        gas.try_consume(2)?;
         Ok(self.score)
     }
 }

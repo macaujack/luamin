@@ -217,31 +217,6 @@ luamin_macro::gen_func_pointer!(
     4
 );
 
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __consume_gas {
-    ($gas:expr, $gas_cost:expr) => {
-        if ($gas).consume($gas_cost) {
-            return ::core::result::Result::Err($crate::func_lib::GasError::GasExceeded);
-        }
-    };
-}
-
-/// Charges gas and returns early with `GasError::GasExceeded` if it fails.
-///
-/// Takes a gas expression and an `i32` cost. Use inside a function returning
-/// `Result<_, GasError<_>>`; negative costs also exhaust the budget.
-///
-/// ```rust
-/// use luamin::{LuaminGas, GasError, func_lib::consume_gas};
-/// fn charge(gas: &mut LuaminGas) -> Result<(), GasError<()>> {
-///     consume_gas!(gas, 2);
-///     Ok(())
-/// }
-/// assert!(charge(&mut LuaminGas::new(1)).is_err());
-/// ```
-pub use crate::__consume_gas as consume_gas;
-
 /// Library construction failed because two host functions have the same name.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("Duplicate host function: {name}")]
